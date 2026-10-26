@@ -55,6 +55,8 @@ object Syu {
 
     const val FREQ_BY_STEP = 0
     const val FREQ_DIRECT = 1
+    /** setFreq mode 3: raw frequency straight to the MCU (packet 0x25), see FytMcuBackend.tuneVariants. */
+    const val FREQ_MCU_DIRECT = 3
     const val BAND_SWITCH_AM = -2
     const val BAND_SWITCH_FM = -3
     const val SEARCH_STATE_AUTO = 1
