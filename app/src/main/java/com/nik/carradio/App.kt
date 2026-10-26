@@ -11,7 +11,7 @@ class App : Application() {
         AppLog.init(this)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
-            runCatching { AppLog.e("CRASH in thread ${t.name}: ${e.javaClass.name}: ${e.message}", e) }
+            runCatching { AppLog.e("CRASH in thread ${t.name}: ${e.javaClass.name}: ${e.message}", e); AppLog.flush() }
             previous?.uncaughtException(t, e)
         }
         AppLog.i("==== App start ${BuildConfig.VERSION_NAME} on Android ${DeviceInfo.realAndroid()} (${android.os.Build.MODEL}) ====")

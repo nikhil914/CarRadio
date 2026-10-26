@@ -13,8 +13,8 @@ android {
         // Head units in the field run Android 6 – 13; 21 keeps even very old units installable.
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     signingConfigs {
@@ -33,9 +33,11 @@ android {
             signingConfig = signingConfigs.getByName("sideload")
         }
         getByName("release") {
-            // Kept un-minified on purpose: JNI (com.android.fmradio.*) and reflection targets
-            // must keep their exact names.
-            isMinifyEnabled = false
+            // R8 on: smaller dex, faster class loading on slow head units. JNI classes
+            // (com.android.fmradio.*) are kept by name in proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("sideload")
         }
     }
@@ -66,5 +68,9 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Installs the baseline profiles shipped inside Compose on first run (Android 7–8.1 path).
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    // QR codes for sending the report without USB. Pure Java, R8 trims it.
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
 }
