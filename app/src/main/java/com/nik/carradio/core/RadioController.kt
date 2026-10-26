@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.Executors
@@ -244,16 +245,126 @@ object RadioController : BackendHost {
         update { it.copy(band = band) }
     }
 
-    fun recallPreset(slot: Int) {
-        val khz = prefs.preset(slot)
-        if (khz <= 0) { setError(UiError("Preset ${slot + 1} is empty", "Long-press a preset to save the current station.", "", null)); return }
-        tune(khz)
+    // ------------------------------------------------------------------ stations
+
+    /** Target of the last station step still in flight, so fast wheel presses don't repeat one. */
+    @Volatile private var pendingStep: Pair<Band, Int>? = null
+
+    /** Steering-wheel / UI next-previous: moves through the selected group, wrapping. */
+    fun stationStep(up: Boolean) {
+        val (band, khz) = pendingStep ?: (state.band to state.freqKhz)
+        val next = StationLogic.neighbour(StationStore.data.value, band, khz, up)
+        if (next == null) {
+            if (active?.caps?.contains(Cap.SEEK) == true) seek(up)
+            else setError(UiError("No saved stations yet", "Run Scan, or tap \"+ Save\" on a station you like.", "", null))
+            return
+        }
+        pendingStep = next.band to next.freqKhz
+        AppLog.i("Station ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
+        tune(next.freqKhz, next.band).invokeOnCompletion { pendingStep = null }
     }
 
-    fun savePreset(slot: Int) {
-        prefs.setPreset(slot, state.freqKhz)
-        AppLog.i("Saved preset ${slot + 1} = ${state.freqKhz} kHz")
-        update { it.copy(status = "Saved ${Freq.format(state.band, state.freqKhz)} to preset ${slot + 1}") }
+    override fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean) {
+        if (!prefs.wheelUsesStations) { AppLog.i("Wheel redirect off in Settings – keeping the vendor's station"); return }
+        if (_scanProgress.value != null) return
+        val d = StationStore.data.value
+        if (StationLogic.visible(d).size < 2) { AppLog.i("Wheel redirect skipped: fewer than 2 stations in this group"); return }
+        val next = StationLogic.neighbour(d, fromBand, fromKhz, up) ?: return
+        pendingStep = next.band to next.freqKhz
+        AppLog.i("Wheel ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
+        tune(next.freqKhz, next.band).invokeOnCompletion { pendingStep = null }
+    }
+
+    fun playStation(s: Station) = tune(s.freqKhz, s.band)
+
+    /** Saves what is playing now. Already saved → just adds it to [groupId]. */
+    fun saveCurrentStation(groupId: String?) {
+        val s = state
+        val realGroup = groupId?.takeIf { g -> StationStore.data.value.groups.any { it.id == g } }
+        StationStore.update { d ->
+            val existing = StationLogic.find(d, s.band, s.freqKhz)
+            if (existing != null) {
+                d.copy(stations = d.stations.map { if (it.id == existing.id) it.copy(
+                    groups = if (realGroup != null) it.groups + realGroup else it.groups,
+                    favourite = it.favourite || groupId == StationLogic.FAVOURITES,
+                    name = it.name.ifBlank { s.stationName }, verified = true) else it })
+            } else {
+                val seed = StationLogic.seedMatch(s.stationName, s.band, s.freqKhz)
+                val groups = setOfNotNull(realGroup ?: seed?.group)
+                d.copy(stations = d.stations + Station((d.stations.maxOfOrNull { it.id } ?: 0) + 1, s.band, s.freqKhz,
+                    name = s.stationName.ifBlank { seed?.name ?: "" }, favourite = groupId == StationLogic.FAVOURITES,
+                    groups = groups, position = (d.stations.maxOfOrNull { it.position } ?: 0) + 1))
+            }
+        }
+        AppLog.i("Saved station ${s.freqKhz} kHz to ${groupId ?: "list"}")
+        update { it.copy(status = "Saved ${Freq.format(s.band, s.freqKhz)} ${Freq.unit(s.band)}") }
+    }
+
+    @Volatile private var scanCancel = false
+    private val _scanProgress = MutableStateFlow<String?>(null)
+    /** Non-null while a station scan runs: a one-line progress text. */
+    val scanProgress: StateFlow<String?> = _scanProgress.asStateFlow()
+
+    fun cancelScan() { scanCancel = true }
+
+    /**
+     * Finds every receivable station by seeking up from the bottom of the band, staying
+     * [dwellMs] on each to collect its RDS name, then merges the hits into the station list.
+     * Works with any backend that can seek; independent of vendor preset tables.
+     */
+    fun scanStations(dwellMs: Long = 2500) = scope.launch {
+        val b = active
+        if (b == null || !b.caps.contains(Cap.SEEK)) {
+            setError(UiError("This radio method cannot scan", "Choose the FYT method in Diagnostics, or save stations by hand.", "", b?.id)); return@launch
+        }
+        if (!state.powered) { powerOnInternal(autoFallback = false); if (!state.powered) return@launch }
+        scanCancel = false
+        val band = state.band
+        val startKhz = state.freqKhz
+        val hits = mutableListOf<ScanHit>()
+        _scanProgress.value = "Starting scan of ${band.name}…"
+        val ok = exec("Scanning ${band.name}", timeoutMs = 6 * 60_000) {
+            b.tune(this@RadioController, band, if (band == Band.FM) Freq.FM_MIN else Freq.AM_MIN)
+            delay(400)
+            var last = state.freqKhz
+            for (i in 0 until 80) {
+                if (scanCancel) break
+                b.seek(this@RadioController, true)
+                if (!waitSettled(last, 9000)) { AppLog.i("Scan: no further station (stuck at $last)"); break }
+                val f = state.freqKhz
+                if (f <= last) { AppLog.i("Scan: wrapped to $f – band done"); break }
+                _scanProgress.value = "Found ${hits.size} · listening on ${Freq.format(band, f)} ${Freq.unit(band)}…"
+                delay(dwellMs)
+                hits += ScanHit(band, state.freqKhz, state.stationName)
+                AppLog.i("Scan hit: ${state.freqKhz} kHz \"${state.stationName}\"")
+                last = state.freqKhz
+            }
+        }
+        _scanProgress.value = null
+        if (hits.isEmpty()) {
+            if (ok) setError(UiError("Scan found no stations", "Check the antenna connection, or switch LOC/DX in the stock radio settings.", "", b.id))
+            runCatching { b.tune(this@RadioController, band, startKhz) }
+            return@launch
+        }
+        var added = 0
+        StationStore.update { d -> StationLogic.mergeScan(d, hits).also { added = it.second }.first }
+        AppLog.i("Scan merged: ${hits.size} found, $added new")
+        update { it.copy(status = "Scan: ${hits.size} stations found, $added new${if (scanCancel) " (stopped)" else ""}") }
+        exec("Returning to first station") { b.tune(this@RadioController, band, hits.first().freqKhz) }
+    }
+
+    /** After a seek: wait until the frequency moved away from [from] and then held still. */
+    private suspend fun waitSettled(from: Int, timeoutMs: Long): Boolean {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (state.freqKhz == from && System.currentTimeMillis() < end) delay(80)
+        if (state.freqKhz == from) return false
+        var seen = state.freqKhz; var stableSince = System.currentTimeMillis()
+        while (System.currentTimeMillis() < end) {
+            delay(100)
+            if (state.freqKhz != seen) { seen = state.freqKhz; stableSince = System.currentTimeMillis() }
+            else if (System.currentTimeMillis() - stableSince > 700 && !state.scanning) return true
+        }
+        return true
     }
 
     fun dismissError() = update { it.copy(error = null) }

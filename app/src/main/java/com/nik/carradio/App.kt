@@ -4,6 +4,7 @@ import android.app.Application
 import com.nik.carradio.core.AppLog
 import com.nik.carradio.core.DeviceInfo
 import com.nik.carradio.core.RadioController
+import com.nik.carradio.core.StationStore
 
 class App : Application() {
     override fun onCreate() {
@@ -16,5 +17,6 @@ class App : Application() {
         }
         AppLog.i("==== App start ${BuildConfig.VERSION_NAME} on Android ${DeviceInfo.realAndroid()} (${android.os.Build.MODEL}) ====")
         RadioController.init(this)
+        StationStore.load(this, RadioController.prefs)
     }
 }

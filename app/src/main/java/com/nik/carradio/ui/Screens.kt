@@ -71,14 +71,15 @@ import com.nik.carradio.core.DeviceInfo
 import com.nik.carradio.core.Freq
 import com.nik.carradio.core.Prefs
 import com.nik.carradio.core.ProbeStatus
+import com.nik.carradio.core.Pty
 import com.nik.carradio.core.RadioController
 import com.nik.carradio.core.RadioState
 import com.nik.carradio.core.UiError
 
-private val Green = Color(0xFF66BB6A)
-private val Amber = Color(0xFFFFCA28)
-private val Red = Color(0xFFEF5350)
-private val Grey = Color(0xFF90A4AE)
+internal val Green = Color(0xFF66BB6A)
+internal val Amber = Color(0xFFFFCA28)
+internal val Red = Color(0xFFEF5350)
+internal val Grey = Color(0xFF90A4AE)
 
 @Composable
 fun AppRoot() {
@@ -115,13 +116,15 @@ fun RadioScreen(onOpenDiagnostics: () -> Unit) {
                 Column(Modifier.weight(1.4f).fillMaxSize().verticalScroll(rememberScrollState())) {
                     MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
                 }
-                Column(Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState())) { Presets(s.freqKhz, s.status) }
+                Column(Modifier.weight(1f).fillMaxSize()) { StationPanel(s.band, s.freqKhz, s.powered) }
             }
         } else {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
-                Spacer(Modifier.height(16.dp))
-                Presets(s.freqKhz, s.status)
+            Column(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
+                }
+                Spacer(Modifier.height(12.dp))
+                Column(Modifier.weight(1f)) { StationPanel(s.band, s.freqKhz, s.powered) }
             }
         }
     }
@@ -155,6 +158,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
     }
     if (s.stationName.isNotBlank()) Text(s.stationName, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
     if (s.radioText.isNotBlank()) Text(s.radioText, color = Grey, maxLines = 2)
+    RdsFlags(s)
     if (s.scanning) Text("Scanning…", color = Amber)
     Spacer(Modifier.height(12.dp))
 
@@ -176,7 +180,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             SmallButton("FM", Modifier.weight(1f), selected = s.band == Band.FM, enabled = tuneable) { RadioController.setBand(Band.FM) }
             SmallButton("AM", Modifier.weight(1f), selected = s.band == Band.AM, enabled = s.caps.contains(Cap.BAND_AM)) { RadioController.setBand(Band.AM) }
-            SmallButton("SCAN", Modifier.weight(1f), enabled = s.caps.contains(Cap.SCAN)) { RadioController.scan() }
+            SmallButton("SCAN", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.scanStations() }
             SmallButton("ENTER", Modifier.weight(1f), enabled = tuneable) { onEnter() }
             SmallButton(if (s.muted) "UNMUTE" else "MUTE", Modifier.weight(1f), enabled = s.caps.contains(Cap.MUTE)) { RadioController.setMute(!s.muted) }
         }
@@ -202,29 +206,19 @@ private fun ErrorCard(e: UiError, onOpenDiagnostics: () -> Unit) {
 }
 
 @Composable
-private fun Presets(freqKhz: Int, status: String) {
-    val ctx = LocalContext.current
-    val prefs = remember { Prefs(ctx) }
-    var tick by remember { mutableIntStateOf(0) }
-    Text("Presets  (tap = play, long-press = save current)", color = Grey, fontSize = 13.sp)
-    Spacer(Modifier.height(6.dp))
-    val values = remember(tick, status) { prefs.presets() }
-    values.chunked(3).forEachIndexed { row, chunk ->
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-            chunk.forEachIndexed { col, khz ->
-                val slot = row * 3 + col
-                val active = khz > 0 && khz == freqKhz
-                Box(
-                    Modifier.weight(1f).height(64.dp)
-                        .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
-                        .combinedClickableCompat(onClick = { RadioController.recallPreset(slot) }, onLongClick = { RadioController.savePreset(slot); tick++ }),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("${slot + 1}", color = Grey, fontSize = 11.sp)
-                        Text(if (khz > 0) Freq.format(Freq.bandOf(khz), khz) else "—", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
+private fun RdsFlags(s: RadioState) {
+    val items = buildList {
+        Pty.name(s.pty).takeIf { it.isNotBlank() }?.let { add(it to true) }
+        s.tp?.let { add("TP" to it) }
+        s.ta?.let { add("TA" to it) }
+        s.af?.let { add("AF" to it) }
+        s.loc?.let { add(if (it) "LOC" to true else "DX" to true) }
+    }
+    if (items.isEmpty()) return
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+        items.forEach { (label, on) ->
+            Box(Modifier.background((if (on) MaterialTheme.colorScheme.primary else Grey).copy(alpha = .18f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (on) MaterialTheme.colorScheme.primary else Grey)
             }
         }
     }
@@ -348,6 +342,8 @@ fun SettingsScreen() {
     var fmStep by remember { mutableIntStateOf(prefs.fmStepKhz) }
     var amStep by remember { mutableIntStateOf(prefs.amStepKhz) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
+    var wheel by remember { mutableStateOf(prefs.wheelUsesStations) }
+    val ctx = LocalContext.current
     var url by remember { mutableStateOf(prefs.streamUrl) }
     var repo by remember { mutableStateOf(prefs.githubRepo) }
     var token by remember { mutableStateOf(prefs.githubToken) }
@@ -361,6 +357,11 @@ fun SettingsScreen() {
             Text("Start radio automatically when the app opens", modifier = Modifier.weight(1f))
             Switch(checked = auto, onCheckedChange = { auto = it; prefs.autoStart = it })
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Steering-wheel next/prev go through my station group", modifier = Modifier.weight(1f))
+            Switch(checked = wheel, onCheckedChange = { wheel = it; prefs.wheelUsesStations = it })
+        }
+        OutlinedButton(onClick = { copyText(ctx, com.nik.carradio.core.StationStore.exportJson()) }) { Text("Copy station list (JSON backup)") }
         Text("Internet radio stream URL (fallback method)", fontWeight = FontWeight.Bold)
         OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("http(s)://…") })
         Button(onClick = { prefs.streamUrl = url; AppLog.i("Stream URL saved"); RadioController.probeAll() }) { Text("Save URL") }
@@ -387,7 +388,7 @@ private fun BigButton(text: String, modifier: Modifier, primary: Boolean = false
 }
 
 @Composable
-private fun SmallButton(text: String, modifier: Modifier, selected: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun SmallButton(text: String, modifier: Modifier, selected: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     Button(onClick = onClick, enabled = enabled, modifier = modifier.height(56.dp), shape = RoundedCornerShape(12.dp),
         colors = ButtonDefaults.buttonColors(containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .55f) else MaterialTheme.colorScheme.surfaceVariant, contentColor = Color.White)) {
         Text(text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -396,10 +397,10 @@ private fun SmallButton(text: String, modifier: Modifier, selected: Boolean = fa
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FlowRowCompat(content: @Composable () -> Unit) {
+internal fun FlowRowCompat(content: @Composable () -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { content() }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-private fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: (() -> Unit)? = null) =
+internal fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: (() -> Unit)? = null) =
     this.combinedClickable(onClick = onClick, onLongClick = onLongClick)
