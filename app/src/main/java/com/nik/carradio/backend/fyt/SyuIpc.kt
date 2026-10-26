@@ -33,6 +33,8 @@ object Syu {
     const val MAIN_C_APP_ID = 0
     const val MAIN_U_APP_ID = 0
     const val MAIN_U_ACC_ON = 50
+    /** Illumination wire (headlights / ILL) state. */
+    const val MAIN_U_LAMPLET = 4
     const val APP_ID_NULL = 0
     const val APP_ID_RADIO = 1
 

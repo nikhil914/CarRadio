@@ -21,6 +21,13 @@ data class UiSettings(
     val fullscreenAfterSec: Int = 0,
     val fullscreenClock: Boolean = true,
     val showLogos: Boolean = true,
+    val nightMode: NightMode = NightMode.SUN,
+    val nightThemeId: String = "nightred",
+    /** TIMED window, minutes after midnight. */
+    val nightStart: Int = 19 * 60,
+    val nightEnd: Int = 6 * 60 + 30,
+    /** GPS speed in full screen (needs location permission; GPS runs only while visible). */
+    val fullscreenSpeed: Boolean = false,
 )
 
 /** Appearance settings as a flow, so the UI re-themes the moment a setting changes. */
@@ -39,6 +46,10 @@ object UiConfig {
             fullscreenAfterSec = sp.getInt("fs_after", 0),
             fullscreenClock = sp.getBoolean("fs_clock", true),
             showLogos = sp.getBoolean("logos", true),
+            nightMode = runCatching { NightMode.valueOf(sp.getString("night", "SUN")!!) }.getOrDefault(NightMode.SUN),
+            nightThemeId = sp.getString("night_theme", "nightred") ?: "nightred",
+            nightStart = sp.getInt("night_start", 19 * 60), nightEnd = sp.getInt("night_end", 6 * 60 + 30),
+            fullscreenSpeed = sp.getBoolean("fs_speed", false),
         )
     }
 
@@ -48,6 +59,8 @@ object UiConfig {
         if (::sp.isInitialized) sp.edit()
             .putString("layout", n.layout.name).putInt("cols", n.gridColumns).putString("theme", n.themeId)
             .putFloat("text", n.textScale).putInt("fs_after", n.fullscreenAfterSec)
-            .putBoolean("fs_clock", n.fullscreenClock).putBoolean("logos", n.showLogos).apply()
+            .putBoolean("fs_clock", n.fullscreenClock).putBoolean("logos", n.showLogos)
+            .putString("night", n.nightMode.name).putString("night_theme", n.nightThemeId)
+            .putInt("night_start", n.nightStart).putInt("night_end", n.nightEnd).putBoolean("fs_speed", n.fullscreenSpeed).apply()
     }
 }

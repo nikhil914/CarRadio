@@ -134,16 +134,17 @@ private fun GroupChip(label: String, selected: Boolean, onClick: () -> Unit, onL
 /** Grid, list or carousel of the visible stations. Each is lazy with stable keys. */
 @Composable
 fun StationsView(visible: List<Station>, ui: UiSettings, band: Band, freqKhz: Int, onClick: (Station) -> Unit, onLong: (Station) -> Unit, modifier: Modifier = Modifier.fillMaxSize()) {
-    fun isActive(st: Station) = st.band == band && abs(st.freqKhz - freqKhz) < StationLogic.SAME_KHZ
+    fun isActive(st: Station) = st.owns(band, freqKhz)
+    fun dbl(st: Station): (() -> Unit)? = if (st.afKhz.isEmpty()) null else ({ RadioController.cycleAf(st) })
     when (ui.layout) {
         StationLayout.GRID -> LazyVerticalGrid(columns = GridCells.Fixed(ui.gridColumns), horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier) {
             items(visible, key = { it.id }, contentType = { 0 }) { st ->
-                StationButton(st, isActive(st), ui.showLogos, compact = ui.gridColumns >= 5, onClick = { onClick(st) }, onLong = { onLong(st) })
+                StationButton(st, isActive(st), ui.showLogos, compact = ui.gridColumns >= 5, onClick = { onClick(st) }, onLong = { onLong(st) }, onDouble = dbl(st))
             }
         }
         StationLayout.LIST -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
-            items(visible, key = { it.id }, contentType = { 1 }) { st -> StationRow(st, isActive(st), ui.showLogos, { onClick(st) }, { onLong(st) }) }
+            items(visible, key = { it.id }, contentType = { 1 }) { st -> StationRow(st, isActive(st), ui.showLogos, { onClick(st) }, { onLong(st) }, dbl(st)) }
         }
         StationLayout.CAROUSEL -> {
             val state = rememberLazyListState()
@@ -151,16 +152,16 @@ fun StationsView(visible: List<Station>, ui: UiSettings, band: Band, freqKhz: In
             // Keep the playing station in view (wheel keys change it while you are not looking).
             LaunchedEffect(activeIndex) { if (activeIndex >= 0) state.animateScrollToItem(activeIndex) }
             LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(10.dp), flingBehavior = rememberSnapFlingBehavior(state), modifier = modifier) {
-                items(visible, key = { it.id }, contentType = { 2 }) { st -> StationCard(st, isActive(st), ui.showLogos, { onClick(st) }, { onLong(st) }) }
+                items(visible, key = { it.id }, contentType = { 2 }) { st -> StationCard(st, isActive(st), ui.showLogos, { onClick(st) }, { onLong(st) }, dbl(st)) }
             }
         }
     }
 }
 
 @Composable
-private fun StationButton(st: Station, active: Boolean, logos: Boolean, compact: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+private fun StationButton(st: Station, active: Boolean, logos: Boolean, compact: Boolean, onClick: () -> Unit, onLong: () -> Unit, onDouble: (() -> Unit)?) {
     val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
-    Row(Modifier.height(72.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(horizontal = 8.dp),
+    Row(Modifier.height(72.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong, onDoubleClick = onDouble).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         if (logos && !compact) { StationLogo(st, 44.dp); Spacer(Modifier.width(8.dp)) }
         Column(Modifier.weight(1f), horizontalAlignment = if (logos && !compact) Alignment.Start else Alignment.CenterHorizontally) {
@@ -170,9 +171,9 @@ private fun StationButton(st: Station, active: Boolean, logos: Boolean, compact:
 }
 
 @Composable
-private fun StationRow(st: Station, active: Boolean, logos: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+private fun StationRow(st: Station, active: Boolean, logos: Boolean, onClick: () -> Unit, onLong: () -> Unit, onDouble: (() -> Unit)?) {
     val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
-    Row(Modifier.fillMaxWidth().height(64.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(horizontal = 12.dp),
+    Row(Modifier.fillMaxWidth().height(64.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong, onDoubleClick = onDouble).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         if (logos) { StationLogo(st, 44.dp); Spacer(Modifier.width(12.dp)) }
         Column(Modifier.weight(1f)) { StationTexts(st, 18) }
@@ -181,9 +182,9 @@ private fun StationRow(st: Station, active: Boolean, logos: Boolean, onClick: ()
 }
 
 @Composable
-private fun StationCard(st: Station, active: Boolean, logos: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+private fun StationCard(st: Station, active: Boolean, logos: Boolean, onClick: () -> Unit, onLong: () -> Unit, onDouble: (() -> Unit)?) {
     val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
-    Column(Modifier.width(168.dp).height(196.dp).background(bg, RoundedCornerShape(16.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(12.dp),
+    Column(Modifier.width(168.dp).height(196.dp).background(bg, RoundedCornerShape(16.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong, onDoubleClick = onDouble).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         if (logos) { StationLogo(st, 96.dp); Spacer(Modifier.height(10.dp)) }
         StationTexts(st, 18, center = true)
@@ -196,6 +197,7 @@ private fun StationTexts(st: Station, size: Int, center: Boolean = false) {
         color = if (st.verified) MaterialTheme.colorScheme.onSurface else Grey,
         textAlign = if (center) androidx.compose.ui.text.style.TextAlign.Center else null)
     Text((if (st.favourite) "★ " else "") + (if (st.name.isNotBlank()) Freq.format(st.band, st.freqKhz) else Freq.unit(st.band)) +
+        (if (st.afKhz.isNotEmpty()) " · AF ${st.afKhz.size}" else "") +
         (if (!st.verified) " · unconfirmed" else ""), fontSize = (size - 5).sp, color = Grey, maxLines = 1)
 }
 
@@ -205,6 +207,7 @@ private fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> U
     var freqText by remember { mutableStateOf(Freq.format(st.band, st.freqKhz)) }
     var fav by remember { mutableStateOf(st.favourite) }
     var inGroups by remember { mutableStateOf(st.groups) }
+    var afText by remember { mutableStateOf(st.afKhz.joinToString(", ") { Freq.format(Band.FM, it) }) }
     val parsed = Freq.parseUser(freqText)
     AlertDialog(
         onDismissRequest = onClose,
@@ -215,6 +218,9 @@ private fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> U
                 OutlinedTextField(freqText, { freqText = it }, singleLine = true, label = { Text("Frequency") }, isError = parsed == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(fav, { fav = it }); Text("Favourite") }
+                OutlinedTextField(afText, { afText = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Alternative frequencies (e.g. 99.3, 101.1)") },
+                    supportingText = { Text("Same station on other transmitters. Double-tap the station to switch between them.") })
                 Text("Groups", color = Grey, fontSize = 13.sp)
                 FlowRowCompat {
                     groups.forEach { g ->
@@ -246,6 +252,7 @@ private fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> U
                 val k = parsed!!
                 StationStore.update { d -> d.copy(stations = d.stations.map {
                     if (it.id == st.id) it.copy(name = name.trim(), freqKhz = k, band = Freq.bandOf(k), favourite = fav, groups = inGroups,
+                        afKhz = StationLogic.parseAfList(afText).filter { a -> kotlin.math.abs(a - k) >= StationLogic.SAME_KHZ },
                         verified = it.verified || k != st.freqKhz) else it }) }
                 onClose()
             }) { Text("Save") }

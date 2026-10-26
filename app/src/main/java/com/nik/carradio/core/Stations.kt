@@ -18,8 +18,12 @@ data class Station(
     val position: Int = 0,
     /** False for seeded entries whose frequency no scan has confirmed yet. */
     val verified: Boolean = true,
+    /** Alternative frequencies of the same programme (other transmitters), FM kHz. */
+    val afKhz: List<Int> = emptyList(),
 ) {
     fun label(): String = name.ifBlank { Freq.format(band, freqKhz) }
+    /** True if [khz] is this station's main frequency or one of its AFs. */
+    fun owns(b: Band, khz: Int): Boolean = b == band && (abs(freqKhz - khz) < StationLogic.SAME_KHZ || afKhz.any { abs(it - khz) < StationLogic.SAME_KHZ })
 }
 
 @Immutable
@@ -107,7 +111,20 @@ object StationLogic {
     }
 
     fun find(data: StationData, band: Band, khz: Int): Station? =
-        data.stations.firstOrNull { it.band == band && abs(it.freqKhz - khz) < SAME_KHZ }
+        data.stations.firstOrNull { it.band == band && abs(it.freqKhz - khz) < SAME_KHZ } ?: data.stations.firstOrNull { it.owns(band, khz) }
+
+    /** Next frequency of the same station: main → AF1 → AF2 → … → main. null if it has no AFs. */
+    fun nextAf(st: Station, currentKhz: Int): Int? {
+        if (st.afKhz.isEmpty()) return null
+        val all = listOf(st.freqKhz) + st.afKhz
+        val i = all.indexOfFirst { abs(it - currentKhz) < SAME_KHZ }
+        return all[(if (i < 0) 0 else i + 1) % all.size]
+    }
+
+    /** Parse "99.3, 101.1 104,8" into kHz; invalid entries are dropped. */
+    fun parseAfList(text: String): List<Int> =
+        text.split(';', ' ', '/').flatMap { it.split(Regex(",(?=\\s|$)")) }.mapNotNull { Freq.parseUser(it) }
+            .filter { Freq.bandOf(it) == Band.FM }.distinct()
 
     /** Stations of the selected group, in the chosen order. */
     fun visible(data: StationData, group: String = data.selectedGroup): List<Station> {
@@ -128,7 +145,8 @@ object StationLogic {
     fun neighbour(data: StationData, band: Band, khz: Int, up: Boolean): Station? {
         val list = visible(data).ifEmpty { visible(data, ALL) }
         if (list.isEmpty()) return null
-        val idx = list.indexOfFirst { it.band == band && abs(it.freqKhz - khz) < SAME_KHZ }
+        val idx = list.indexOfFirst { it.band == band && abs(it.freqKhz - khz) < SAME_KHZ }.takeIf { it >= 0 }
+            ?: list.indexOfFirst { it.owns(band, khz) }
         if (idx >= 0) return list[Math.floorMod(idx + if (up) 1 else -1, list.size)]
         // Not on a saved station: go to the nearest one in that direction (by frequency).
         val sameBand = list.filter { it.band == band }.sortedBy { it.freqKhz }

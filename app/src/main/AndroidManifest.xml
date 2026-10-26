@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Optional GPS speedometer in full screen; GPS is on only while full screen is shown. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <!-- Sideloaded tool: needs to see vendor packages (com.syu.*, com.microntek.*, …). -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"

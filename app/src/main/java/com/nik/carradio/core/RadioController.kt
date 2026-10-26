@@ -294,6 +294,14 @@ object RadioController : BackendHost {
 
     fun playStation(s: Station) = tune(s.freqKhz, s.band)
 
+    /** Double-tap on a station: move to its next alternative frequency (weak signal on the road). */
+    fun cycleAf(s: Station) {
+        val cur = if (s.owns(state.band, state.freqKhz)) state.freqKhz else s.freqKhz
+        val next = StationLogic.nextAf(s, cur) ?: return playStation(s).let { }
+        AppLog.i("AF: ${s.label()} $cur -> $next kHz")
+        tune(next, s.band)
+    }
+
     /** Saves what is playing now. Already saved → just adds it to [groupId]. */
     fun saveCurrentStation(groupId: String?) {
         val s = state

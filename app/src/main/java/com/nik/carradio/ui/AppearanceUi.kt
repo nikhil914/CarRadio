@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -58,7 +59,7 @@ fun AppearanceSettings() {
         }
     }
 
-    Text("Appearance", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+    SectionHeader("Appearance")
     Text("Station layout", fontWeight = FontWeight.Bold)
     FlowRowCompat { StationLayout.entries.forEach { l -> FilterChip(selected = ui.layout == l, onClick = { UiConfig.update { it.copy(layout = l) } }, label = { Text(l.label) }) } }
     if (ui.layout == StationLayout.GRID) {
@@ -108,6 +109,90 @@ fun AppearanceSettings() {
         Text("Clock in full screen", modifier = Modifier.weight(1f))
         Switch(checked = ui.fullscreenClock, onCheckedChange = { v -> UiConfig.update { it.copy(fullscreenClock = v) } })
     }
-    Spacer(Modifier.height(8.dp))
-    Box(Modifier.fillMaxWidth().height(1.dp).background(Grey.copy(alpha = .25f)))
+    Text("Speedometer in full screen (GPS, on only while full screen is shown)", fontSize = 14.sp)
+    val perm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        UiConfig.update { it.copy(fullscreenSpeed = ok) }
+        if (!ok) importMsg = "Location permission denied – speedometer stays off"
+    }
+    SwitchRow("Show speed (km/h)", ui.fullscreenSpeed) { on ->
+        if (!on) UiConfig.update { it.copy(fullscreenSpeed = false) }
+        else if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+            UiConfig.update { it.copy(fullscreenSpeed = true) }
+        else perm.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+}
+
+/** Night theme switching: off, always, by time, sunset–sunrise (Abu Dhabi), headlights (FYT). */
+@Composable
+fun DayNightSettings() {
+    val ui by UiConfig.settings.collectAsState()
+    val lights by com.nik.carradio.core.CarSignals.headlights.collectAsState()
+    SectionHeader("Day and night")
+    FlowRowCompat {
+        com.nik.carradio.core.NightMode.entries.forEach { m ->
+            FilterChip(selected = ui.nightMode == m, onClick = { UiConfig.update { it.copy(nightMode = m) } }, label = { Text(m.label) })
+        }
+    }
+    val hint = when (ui.nightMode) {
+        com.nik.carradio.core.NightMode.SUN -> {
+            val c = java.util.Calendar.getInstance()
+            val off = java.util.TimeZone.getDefault().getOffset(c.timeInMillis) / 60_000
+            com.nik.carradio.core.DayNight.sunTimes(c.get(java.util.Calendar.DAY_OF_YEAR), com.nik.carradio.core.DayNight.DEFAULT_LAT, com.nik.carradio.core.DayNight.DEFAULT_LON, off)
+                ?.let { (r, s) -> "Today in Abu Dhabi: night from ${hm(s)} to ${hm(r)}" } ?: ""
+        }
+        com.nik.carradio.core.NightMode.HEADLIGHTS -> when (lights) {
+            null -> "This unit has not reported the headlights yet – using sunset to sunrise until it does"
+            true -> "Headlights are ON"
+            false -> "Headlights are OFF"
+        }
+        com.nik.carradio.core.NightMode.TIMED -> "Night from ${hm(ui.nightStart)} to ${hm(ui.nightEnd)}"
+        else -> ""
+    }
+    if (hint.isNotBlank()) Text(hint, color = Grey, fontSize = 13.sp)
+    if (ui.nightMode == com.nik.carradio.core.NightMode.TIMED) {
+        Text("Night starts", fontSize = 13.sp, color = Grey)
+        FlowRowCompat { listOf(17 * 60 + 30, 18 * 60, 18 * 60 + 30, 19 * 60, 20 * 60).forEach { v ->
+            FilterChip(selected = ui.nightStart == v, onClick = { UiConfig.update { it.copy(nightStart = v) } }, label = { Text(hm(v)) }) } }
+        Text("Night ends", fontSize = 13.sp, color = Grey)
+        FlowRowCompat { listOf(5 * 60 + 30, 6 * 60, 6 * 60 + 30, 7 * 60).forEach { v ->
+            FilterChip(selected = ui.nightEnd == v, onClick = { UiConfig.update { it.copy(nightEnd = v) } }, label = { Text(hm(v)) }) } }
+    }
+    if (ui.nightMode != com.nik.carradio.core.NightMode.OFF) {
+        Text("Night theme", fontWeight = FontWeight.Bold)
+        FlowRowCompat {
+            THEMES.forEach { t ->
+                FilterChip(selected = ui.nightThemeId == t.id, onClick = { UiConfig.update { it.copy(nightThemeId = t.id) } },
+                    leadingIcon = { Box(Modifier.size(16.dp).background(t.accent, CircleShape)) }, label = { Text(t.name) })
+            }
+        }
+    }
+}
+
+private fun hm(min: Int) = "%02d:%02d".format(min / 60, min % 60)
+
+/** Back up / restore everything to one file, plus the plain JSON copy. */
+@Composable
+fun BackupSection() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var msg by remember { mutableStateOf("") }
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) scope.launch { msg = runCatching { com.nik.carradio.core.Backup.export(ctx, uri) }.getOrElse { "Backup failed: ${it.message}" } }
+    }
+    val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            msg = runCatching { com.nik.carradio.core.Backup.restore(ctx, uri) }.getOrElse { e ->
+                if (e is com.nik.carradio.core.RadioException) "${e.title}. ${e.hint}" else "Restore failed: ${e.message}" }
+        }
+    }
+    Text("Saves stations, groups, alternative frequencies, logos and settings in one file (not the GitHub token). " +
+        "Keep it on an SD card or send it to your phone before a firmware update.", color = Grey, fontSize = 13.sp)
+    FlowRowCompat {
+        Button(onClick = { runCatching { save.launch("carradio-backup-${java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())}.json") }
+            .onFailure { msg = "This unit has no file picker – use Copy station list instead" } }) { Text("Back up…") }
+        OutlinedButton(onClick = { runCatching { open.launch(arrayOf("application/json", "text/plain", "*/*")) }
+            .onFailure { msg = "This unit has no file picker" } }) { Text("Restore…") }
+        OutlinedButton(onClick = { copyText(ctx, com.nik.carradio.core.StationStore.exportJson()) }) { Text("Copy station list") }
+    }
+    if (msg.isNotBlank()) Text(msg, fontSize = 13.sp)
 }

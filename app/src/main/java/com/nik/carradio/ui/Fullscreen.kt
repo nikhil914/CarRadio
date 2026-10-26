@@ -1,6 +1,16 @@
 package com.nik.carradio.ui
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Bundle
+import android.os.Looper
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -70,6 +80,7 @@ fun FullscreenRadio(onExit: () -> Unit) {
             }
         }
         if (ui.fullscreenClock) Clock(Modifier.align(Alignment.TopEnd).padding(20.dp))
+        if (ui.fullscreenSpeed) Speedometer(Modifier.align(Alignment.TopStart).padding(20.dp))
         Column(Modifier.align(Alignment.Center).padding(horizontal = 120.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             if (saved != null && ui.showLogos) { StationLogo(saved, 140.dp); Spacer(Modifier.height(12.dp)) }
             val name = s.stationName.ifBlank { saved?.name ?: "" }
@@ -100,6 +111,33 @@ private fun Clock(modifier: Modifier) {
         }
     }
     Text(now, fontSize = 40.sp, fontWeight = FontWeight.SemiBold, color = Grey, modifier = modifier)
+}
+
+/** GPS speed. Location updates run only while this is on screen, once per second. */
+@SuppressLint("MissingPermission")
+@Composable
+private fun Speedometer(modifier: Modifier) {
+    val ctx = LocalContext.current
+    val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    var kmh by remember { mutableStateOf<Int?>(null) }
+    var status by remember { mutableStateOf(if (granted) "GPS…" else "No location permission") }
+    if (granted) DisposableEffect(Unit) {
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val l = object : LocationListener {
+            override fun onLocationChanged(loc: Location) { kmh = if (loc.hasSpeed()) Math.round(loc.speed * 3.6f) else null; status = "" }
+            @Deprecated("Deprecated in Java") override fun onStatusChanged(p: String?, s: Int, b: Bundle?) {}
+            override fun onProviderEnabled(p: String) {}
+            override fun onProviderDisabled(p: String) { status = "GPS off" }
+        }
+        val ok = runCatching { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, l, Looper.getMainLooper()) }
+            .onFailure { status = "No GPS on this unit" }.isSuccess
+        onDispose { if (ok) runCatching { lm.removeUpdates(l) } }
+    }
+    Row(modifier, verticalAlignment = Alignment.Bottom) {
+        Text(kmh?.toString() ?: "--", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Grey)
+        Spacer(Modifier.width(6.dp))
+        Text(if (status.isNotEmpty() && kmh == null) status else "km/h", fontSize = 16.sp, color = Grey, modifier = Modifier.padding(bottom = 8.dp))
+    }
 }
 
 @Composable

@@ -28,6 +28,14 @@ Built first for an **FYT UIS8141E (SC7731E)** unit (reports "Android 13", really
 - **Persistent log**: every step is written to a file. The Log tab and "Share report" show the full trail, including the step that was running if the app was killed.
 - **Diagnostics tab**: per-method status (WORKS / MAYBE / BLOCKED / NO / CRASHED), with technical details, "Use this", "Test start", device properties, vendor packages, `libfmjni` and `/dev` nodes.
 
+## Polish (1.0.0)
+
+- **Day and night:** always day, always night, by time, sunset to sunrise (computed for Abu Dhabi on the unit, no GPS or internet), or with headlights (FYT main-module update 4, the ILL wire; it falls back to sunset/sunrise until the unit reports it). Day and night themes are chosen separately; the night theme defaults to Night red. It is re-evaluated each minute and immediately when the headlights change.
+- **Speedometer in full screen:** GPS speed in km/h. Location updates run once per second, and only while full screen is visible. It asks for location permission when you switch it on.
+- **Backup and restore:** one JSON file with stations, groups, AF lists, logos (base64 WebP), appearance and radio settings, saved and opened with the system file picker. The GitHub token is never included.
+- **Alternative frequencies:** each station can list other transmitters of the same programme. Double-tap the station to cycle through them, and the app still recognises the station when tuned to one of its AFs. FYT's own AF is unreliable (NavRadio says so too), so this is manual by design.
+- **Settings in sections:** Appearance, Day and night, Radio, Stations and backup, Radio key, Internet radio, Reports, Advanced.
+
 ## System hooks (0.5.0)
 
 - **Home-screen widgets:** wide (4×1) and square (2×2), each with the logo or drawn initials, the station, frequency and RDS line, plus previous, on/off and next. They are plain RemoteViews: nothing runs for them, and they redraw only on a visible change (debounced), and only when a widget is placed.

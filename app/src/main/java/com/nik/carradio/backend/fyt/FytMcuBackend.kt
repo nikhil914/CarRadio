@@ -64,6 +64,7 @@ class FytMcuBackend : RadioBackend {
     @Volatile private var acc = -1
 
     private val mainCb = Syu.Callback { code, ints, _, _ ->
+        if (code == Syu.MAIN_U_LAMPLET && ints != null && ints.isNotEmpty()) com.nik.carradio.core.CarSignals.setHeadlights(ints[0] != 0)
         if (code == Syu.MAIN_U_ACC_ON && ints != null && ints.isNotEmpty()) {
             val on = ints[0]
             if (acc != -1 && acc != on) { AppLog.i("FYT: ACC ${if (on == 1) "ON" else "OFF"}"); host?.onAccChanged(on == 1) }
@@ -106,7 +107,7 @@ class FytMcuBackend : RadioBackend {
             ?: throw RadioException("FYT service has no radio module", "This firmware exposes no MCU tuner. Try the FmNative method in Diagnostics.")
         main = toolkit.module(Syu.MODULE_MAIN)
         Syu.RADIO_UPDATES.forEach { code -> runCatching { radio!!.register(radioCb, code, 1) } }
-        main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1); mm.register(mainCb, Syu.MAIN_U_ACC_ON, 1) } }
+        main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1); mm.register(mainCb, Syu.MAIN_U_ACC_ON, 1); mm.register(mainCb, Syu.MAIN_U_LAMPLET, 1) } }
         steer = runCatching { toolkit.module(Syu.MODULE_STEER) }.getOrNull()
         // update=0: only future key events, no replay of stale values.
         steer?.let { st -> for (c in 0..255) runCatching { st.register(steerCb, c, 0) } }
@@ -256,7 +257,7 @@ class FytMcuBackend : RadioBackend {
 
     override fun release(host: BackendHost) {
         radio?.let { r -> Syu.RADIO_UPDATES.forEach { runCatching { r.unregister(radioCb, it) } } }
-        main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON) } }
+        main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON); m.unregister(mainCb, Syu.MAIN_U_LAMPLET) } }
         steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
         radio = null; main = null; steer = null; this.host = null
     }
