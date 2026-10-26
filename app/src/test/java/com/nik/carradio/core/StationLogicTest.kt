@@ -75,6 +75,28 @@ class StationLogicTest {
         assertEquals(d, StationLogic.move(d, order[0].id, -1).copy(sort = d.sort))   // already first: unchanged
     }
 
+    @Test fun logoFilesMatchStations() {
+        val d = StationLogic.initial(presetsKhz = listOf(95_500))
+        val s = d.stations
+        assertEquals("Virgin Radio", StationLogic.matchLogoFile("Virgin Radio.png", s)?.name)
+        assertEquals("Virgin Radio", StationLogic.matchLogoFile("virgin_logo.webp", s)?.name)    // seed alias
+        assertEquals("Kadak FM", StationLogic.matchLogoFile("kadak-fm.jpg", s)?.name)
+        assertEquals(95_500, StationLogic.matchLogoFile("95.5.png", s)?.freqKhz)                  // frequency
+        assertEquals(100_500, StationLogic.matchLogoFile("FM 1005.png", s)?.freqKhz)
+        assertEquals("Abu Dhabi Classic FM", StationLogic.matchLogoFile("Abu Dhabi Classic FM HD.png", s)?.name)
+        assertNull(StationLogic.matchLogoFile("holiday photo.jpg", s))
+        assertNull(StationLogic.matchLogoFile(".png", s))
+    }
+
+    @Test fun initialsForDrawnLogos() {
+        assertEquals("VR", StationLogic.initials("Virgin Radio"))
+        assertEquals("K", StationLogic.initials("Kadak FM"))
+        assertEquals("R1", StationLogic.initials("Radio 1"))
+        assertEquals("D92", StationLogic.initials("Dubai 92"))
+        assertEquals("C", StationLogic.initials("City 1016"))
+        assertEquals("AD", StationLogic.initials("Abu Dhabi Classic FM"))
+    }
+
     @Test fun ptyNames() {
         assertEquals("News", Pty.name(1))
         assertEquals("Pop music", Pty.name(10))

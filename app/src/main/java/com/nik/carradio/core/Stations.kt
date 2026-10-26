@@ -163,6 +163,38 @@ object StationLogic {
         return data.copy(stations = list) to added
     }
 
+    /**
+     * Which station a logo file belongs to, from its file name (NavRadio-style packs are named
+     * after the station): exact name, then a UAE seed alias, then a frequency in the name
+     * ("1041", "104.1", "104_1"), then a name contained in the file name.
+     */
+    fun matchLogoFile(fileName: String, stations: List<Station>, seed: List<SeedEntry> = UAE_SEED): Station? {
+        val base = fileName.substringBeforeLast('.')
+        val n = norm(base)
+        if (n.isEmpty()) return null
+        stations.firstOrNull { it.name.isNotBlank() && norm(it.name) == n }?.let { return it }
+        seedMatch(base, Band.FM, -1, seed)?.let { e -> stations.firstOrNull { norm(it.name) == norm(e.name) }?.let { return it } }
+        Regex("(?<!\\d)(8[7-9]|9\\d|10[0-8])[._,]?(\\d)(?!\\d)").find(base)?.let { m ->
+            val khz = m.groupValues[1].toInt() * 1000 + m.groupValues[2].toInt() * 100
+            stations.firstOrNull { it.band == Band.FM && abs(it.freqKhz - khz) < SAME_KHZ }?.let { return it }
+        }
+        return stations.filter { norm(it.name).length >= 4 && n.contains(norm(it.name)) }.maxByOrNull { it.name.length }
+    }
+
+    /** Up to two letters for a drawn logo: "Virgin Radio" → "VR", "Kadak FM" → "K". */
+    fun initials(name: String): String {
+        val words = name.split(' ', '-', '_').map { w -> w.filter { it.isLetterOrDigit() } }
+            .filter { it.isNotEmpty() && !it.equals("FM", ignoreCase = true) }
+        if (words.isEmpty()) return name.take(2).uppercase()
+        val first = words[0]
+        val second = words.getOrNull(1)
+        return when {
+            second == null -> first.take(1).uppercase()
+            second.all { it.isDigit() } -> if (second.length <= 3) first.take(1).uppercase() + second else first.take(1).uppercase()
+            else -> (first.take(1) + second.take(1)).uppercase()
+        }
+    }
+
     fun groupName(data: StationData, id: String): String =
         (VIRTUAL + data.groups + Group(UNSORTED, "Unsorted", true)).firstOrNull { it.id == id }?.name ?: id
 

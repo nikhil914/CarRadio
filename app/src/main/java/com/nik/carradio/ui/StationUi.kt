@@ -46,6 +46,18 @@ import com.nik.carradio.core.SortMode
 import com.nik.carradio.core.Station
 import com.nik.carradio.core.StationLogic
 import com.nik.carradio.core.StationStore
+import com.nik.carradio.core.StationLayout
+import com.nik.carradio.core.UiConfig
+import com.nik.carradio.core.UiSettings
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
@@ -55,6 +67,7 @@ import kotlin.math.abs
 @Composable
 fun StationPanel(band: Band, freqKhz: Int, powered: Boolean) {
     val data by StationStore.data.collectAsState()
+    val ui by UiConfig.settings.collectAsState()
     val scan by RadioController.scanProgress.collectAsState()
     var editing by remember { mutableStateOf<Station?>(null) }
     var newGroup by remember { mutableStateOf(false) }
@@ -92,13 +105,7 @@ fun StationPanel(band: Band, freqKhz: Int, powered: Boolean) {
             "No stations in \"${StationLogic.groupName(data, data.selectedGroup)}\". Tune one and press + SAVE, or long-press a station to add it here.",
             color = Grey, fontSize = 14.sp)
     } else {
-        LazyVerticalGrid(columns = GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
-            items(visible, key = { it.id }, contentType = { 0 }) { st ->
-                StationButton(st, active = st.band == band && abs(st.freqKhz - freqKhz) < StationLogic.SAME_KHZ,
-                    onClick = { RadioController.playStation(st) }, onLong = { editing = st })
-            }
-        }
+        StationsView(visible, ui, band, freqKhz, onClick = { RadioController.playStation(it) }, onLong = { editing = it })
     }
 
     editing?.let { st -> EditStationDialog(st, data.groups) { editing = null } }
@@ -124,18 +131,72 @@ private fun GroupChip(label: String, selected: Boolean, onClick: () -> Unit, onL
     }
 }
 
+/** Grid, list or carousel of the visible stations. Each is lazy with stable keys. */
 @Composable
-private fun StationButton(st: Station, active: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
-    val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
-    Box(Modifier.height(68.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(horizontal = 8.dp),
-        contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(st.label(), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = if (st.verified) MaterialTheme.colorScheme.onSurface else Grey)
-            Text((if (st.favourite) "★ " else "") + (if (st.name.isNotBlank()) Freq.format(st.band, st.freqKhz) else Freq.unit(st.band)) +
-                (if (!st.verified) " · unconfirmed" else ""), fontSize = 12.sp, color = Grey, maxLines = 1)
+fun StationsView(visible: List<Station>, ui: UiSettings, band: Band, freqKhz: Int, onClick: (Station) -> Unit, onLong: (Station) -> Unit, modifier: Modifier = Modifier.fillMaxSize()) {
+    fun isActive(st: Station) = st.band == band && abs(st.freqKhz - freqKhz) < StationLogic.SAME_KHZ
+    when (ui.layout) {
+        StationLayout.GRID -> LazyVerticalGrid(columns = GridCells.Fixed(ui.gridColumns), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier) {
+            items(visible, key = { it.id }, contentType = { 0 }) { st ->
+                StationButton(st, isActive(st), ui.showLogos, compact = ui.gridColumns >= 5, onClick = { onClick(st) }, onLong = { onLong(st) })
+            }
+        }
+        StationLayout.LIST -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
+            items(visible, key = { it.id }, contentType = { 1 }) { st -> StationRow(st, isActive(st), ui.showLogos, { onClick(st) }, { onLong(st) }) }
+        }
+        StationLayout.CAROUSEL -> {
+            val state = rememberLazyListState()
+            val activeIndex = visible.indexOfFirst { isActive(it) }
+            // Keep the playing station in view (wheel keys change it while you are not looking).
+            LaunchedEffect(activeIndex) { if (activeIndex >= 0) state.animateScrollToItem(activeIndex) }
+            LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(10.dp), flingBehavior = rememberSnapFlingBehavior(state), modifier = modifier) {
+                items(visible, key = { it.id }, contentType = { 2 }) { st -> StationCard(st, isActive(st), ui.showLogos, { onClick(st) }, { onLong(st) }) }
+            }
         }
     }
+}
+
+@Composable
+private fun StationButton(st: Station, active: Boolean, logos: Boolean, compact: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+    val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
+    Row(Modifier.height(72.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        if (logos && !compact) { StationLogo(st, 44.dp); Spacer(Modifier.width(8.dp)) }
+        Column(Modifier.weight(1f), horizontalAlignment = if (logos && !compact) Alignment.Start else Alignment.CenterHorizontally) {
+            StationTexts(st, if (compact) 15 else 17)
+        }
+    }
+}
+
+@Composable
+private fun StationRow(st: Station, active: Boolean, logos: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+    val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
+    Row(Modifier.fillMaxWidth().height(64.dp).background(bg, RoundedCornerShape(10.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        if (logos) { StationLogo(st, 44.dp); Spacer(Modifier.width(12.dp)) }
+        Column(Modifier.weight(1f)) { StationTexts(st, 18) }
+        if (active) Text("▶", color = MaterialTheme.colorScheme.primary, fontSize = 18.sp)
+    }
+}
+
+@Composable
+private fun StationCard(st: Station, active: Boolean, logos: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+    val bg = if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant
+    Column(Modifier.width(168.dp).height(196.dp).background(bg, RoundedCornerShape(16.dp)).combinedClickableCompat(onClick = onClick, onLongClick = onLong).padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (logos) { StationLogo(st, 96.dp); Spacer(Modifier.height(10.dp)) }
+        StationTexts(st, 18, center = true)
+    }
+}
+
+@Composable
+private fun StationTexts(st: Station, size: Int, center: Boolean = false) {
+    Text(st.label(), fontSize = size.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        color = if (st.verified) MaterialTheme.colorScheme.onSurface else Grey,
+        textAlign = if (center) androidx.compose.ui.text.style.TextAlign.Center else null)
+    Text((if (st.favourite) "★ " else "") + (if (st.name.isNotBlank()) Freq.format(st.band, st.freqKhz) else Freq.unit(st.band)) +
+        (if (!st.verified) " · unconfirmed" else ""), fontSize = (size - 5).sp, color = Grey, maxLines = 1)
 }
 
 @Composable
@@ -164,6 +225,20 @@ private fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> U
                     TextButton(onClick = { StationStore.update { StationLogic.move(it, st.id, -1) } }) { Text("◀ Move earlier") }
                     TextButton(onClick = { StationStore.update { StationLogic.move(it, st.id, +1) } }) { Text("Move later ▶") }
                 }
+                val ctx = LocalContext.current
+                val scope = rememberCoroutineScope()
+                var logoMsg by remember { mutableStateOf("") }
+                val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    if (uri != null) scope.launch { logoMsg = if (LogoStore.importFor(ctx, st.id, uri)) "Logo saved" else "That file is not a readable image" }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StationLogo(st, 44.dp)
+                    TextButton(onClick = {
+                        runCatching { pick.launch("image/*") }.onFailure { logoMsg = "No file picker on this unit – use Settings → Import logo folder" }
+                    }) { Text("Choose logo…") }
+                    TextButton(onClick = { LogoStore.remove(st.id); logoMsg = "Logo removed" }) { Text("Remove logo") }
+                }
+                if (logoMsg.isNotBlank()) Text(logoMsg, color = Grey, fontSize = 13.sp)
             }
         },
         confirmButton = {

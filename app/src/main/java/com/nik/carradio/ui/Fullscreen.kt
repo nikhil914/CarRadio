@@ -1,0 +1,115 @@
+package com.nik.carradio.ui
+
+import android.app.Activity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.nik.carradio.core.Freq
+import com.nik.carradio.core.Pty
+import com.nik.carradio.core.RadioController
+import com.nik.carradio.core.StationLogic
+import com.nik.carradio.core.StationStore
+import com.nik.carradio.core.UiConfig
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Glanceable full screen: big frequency and name, logo, clock. Left/right thirds step through
+ * the station group (big targets while driving); the middle closes it.
+ */
+@Composable
+fun FullscreenRadio(onExit: () -> Unit) {
+    val s by RadioController.stateFlow.collectAsState()
+    val data by StationStore.data.collectAsState()
+    val ui by UiConfig.settings.collectAsState()
+    val saved = remember(data, s.band, s.freqKhz) { StationLogic.find(data, s.band, s.freqKhz) }
+    HideSystemBars()
+    val noRipple = remember { MutableInteractionSource() }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxHeight().clickable(noRipple, null) { RadioController.stationStep(false) }, contentAlignment = Alignment.CenterStart) {
+                Text("◀", fontSize = 56.sp, color = Grey.copy(alpha = .5f), modifier = Modifier.padding(start = 24.dp))
+            }
+            Box(Modifier.weight(2f).fillMaxHeight().clickable(noRipple, null) { onExit() })
+            Box(Modifier.weight(1f).fillMaxHeight().clickable(noRipple, null) { RadioController.stationStep(true) }, contentAlignment = Alignment.CenterEnd) {
+                Text("▶", fontSize = 56.sp, color = Grey.copy(alpha = .5f), modifier = Modifier.padding(end = 24.dp))
+            }
+        }
+        if (ui.fullscreenClock) Clock(Modifier.align(Alignment.TopEnd).padding(20.dp))
+        Column(Modifier.align(Alignment.Center).padding(horizontal = 120.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            if (saved != null && ui.showLogos) { StationLogo(saved, 140.dp); Spacer(Modifier.height(12.dp)) }
+            val name = s.stationName.ifBlank { saved?.name ?: "" }
+            if (name.isNotBlank()) Text(name, fontSize = 44.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(Freq.format(s.band, s.freqKhz), fontSize = 120.sp, fontWeight = FontWeight.Bold,
+                    color = if (s.powered) MaterialTheme.colorScheme.primary else Grey)
+                Spacer(Modifier.width(8.dp))
+                Text(Freq.unit(s.band), fontSize = 28.sp, modifier = Modifier.padding(bottom = 24.dp))
+            }
+            val line = listOf(Pty.name(s.pty), s.radioText).filter { it.isNotBlank() }.joinToString(" · ")
+            if (line.isNotBlank()) Text(line, fontSize = 22.sp, color = Grey, maxLines = 2, textAlign = TextAlign.Center)
+        }
+        Text("tap the middle to close · sides change station", fontSize = 12.sp, color = Grey.copy(alpha = .6f),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp))
+    }
+}
+
+/** Updates once a minute, on the minute: no per-second recomposition. */
+@Composable
+private fun Clock(modifier: Modifier) {
+    val fmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    var now by remember { mutableStateOf(fmt.format(Date())) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000 - System.currentTimeMillis() % 60_000 + 50)
+            now = fmt.format(Date())
+        }
+    }
+    Text(now, fontSize = 40.sp, fontWeight = FontWeight.SemiBold, color = Grey, modifier = modifier)
+}
+
+@Composable
+private fun HideSystemBars() {
+    val view = LocalView.current
+    val activity = LocalContext.current as? Activity ?: return
+    DisposableEffect(Unit) {
+        val c = WindowCompat.getInsetsController(activity.window, view)
+        c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        c.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose { c.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+}

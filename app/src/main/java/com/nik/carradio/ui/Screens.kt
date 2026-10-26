@@ -50,6 +50,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -84,7 +89,25 @@ internal val Grey = Color(0xFF90A4AE)
 @Composable
 fun AppRoot() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    var fullscreen by rememberSaveable { mutableStateOf(false) }
+    // Plain holder, not state: touches must not trigger recomposition.
+    val lastTouch = remember { longArrayOf(System.currentTimeMillis()) }
+    val ui by com.nik.carradio.core.UiConfig.settings.collectAsState()
+    val powered by remember { RadioController.stateFlow.map { it.powered }.distinctUntilChanged() }.collectAsState(false)
+    // Idle timer: full screen after N s without a touch, only on the Radio tab while playing.
+    LaunchedEffect(ui.fullscreenAfterSec, tab, powered, fullscreen) {
+        if (ui.fullscreenAfterSec <= 0 || tab != 0 || !powered || fullscreen) return@LaunchedEffect
+        lastTouch[0] = System.currentTimeMillis()
+        while (true) {
+            delay(1000)
+            if (System.currentTimeMillis() - lastTouch[0] >= ui.fullscreenAfterSec * 1000L) { fullscreen = true; break }
+        }
+    }
+    if (fullscreen) { FullscreenRadio { fullscreen = false; lastTouch[0] = System.currentTimeMillis() }; return }
+    Surface(Modifier.fillMaxSize().pointerInput(Unit) {
+        // Watches touches without consuming them, to reset the idle timer.
+        awaitPointerEventScope { while (true) { awaitPointerEvent(PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis() } }
+    }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
             TabRow(selectedTabIndex = tab) {
                 listOf("Radio", "Diagnostics", "Log", "Settings").forEachIndexed { i, t ->
@@ -92,7 +115,7 @@ fun AppRoot() {
                 }
             }
             when (tab) {
-                0 -> RadioScreen(onOpenDiagnostics = { tab = 1 })
+                0 -> RadioScreen(onOpenDiagnostics = { tab = 1 }, onFullscreen = { fullscreen = true })
                 1 -> DiagnosticsScreen()
                 2 -> LogScreen()
                 else -> SettingsScreen()
@@ -104,7 +127,7 @@ fun AppRoot() {
 // ============================================================================ Radio
 
 @Composable
-fun RadioScreen(onOpenDiagnostics: () -> Unit) {
+fun RadioScreen(onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit) {
     val s by RadioController.stateFlow.collectAsState()
     val probing by RadioController.probing.collectAsState()
     var showEntry by remember { mutableStateOf(false) }
@@ -114,14 +137,14 @@ fun RadioScreen(onOpenDiagnostics: () -> Unit) {
         if (wide) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Column(Modifier.weight(1.4f).fillMaxSize().verticalScroll(rememberScrollState())) {
-                    MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
+                    MainPanel(s, probing, onOpenDiagnostics, onFullscreen) { showEntry = true }
                 }
                 Column(Modifier.weight(1f).fillMaxSize()) { StationPanel(s.band, s.freqKhz, s.powered) }
             }
         } else {
             Column(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
+                    MainPanel(s, probing, onOpenDiagnostics, onFullscreen) { showEntry = true }
                 }
                 Spacer(Modifier.height(12.dp))
                 Column(Modifier.weight(1f)) { StationPanel(s.band, s.freqKhz, s.powered) }
@@ -132,7 +155,7 @@ fun RadioScreen(onOpenDiagnostics: () -> Unit) {
 }
 
 @Composable
-private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnostics: () -> Unit, onEnter: () -> Unit) {
+private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit, onEnter: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Method: ", color = Grey)
         Text(s.backendName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -149,7 +172,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
     Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
         Text(Freq.format(s.band, s.freqKhz), fontSize = 96.sp, fontWeight = FontWeight.Bold,
             color = if (s.powered) MaterialTheme.colorScheme.primary else Grey,
-            modifier = Modifier.combinedClickableCompat(onClick = onEnter))
+            modifier = Modifier.combinedClickableCompat(onClick = onEnter, onDoubleClick = onFullscreen))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.padding(bottom = 18.dp)) {
             Text(Freq.unit(s.band), fontSize = 22.sp)
@@ -349,6 +372,7 @@ fun SettingsScreen() {
     var token by remember { mutableStateOf(prefs.githubToken) }
     val crashed = remember { mutableStateOf(prefs.crashedBackends()) }
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AppearanceSettings()
         Text("FM step", fontWeight = FontWeight.Bold)
         FlowRowCompat { listOf(50, 100, 200).forEach { v -> FilterChip(selected = fmStep == v, onClick = { fmStep = v; prefs.fmStepKhz = v }, label = { Text("$v kHz") }) } }
         Text("AM step", fontWeight = FontWeight.Bold)
@@ -402,5 +426,5 @@ internal fun FlowRowCompat(content: @Composable () -> Unit) {
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-internal fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: (() -> Unit)? = null) =
-    this.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+internal fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: (() -> Unit)? = null, onDoubleClick: (() -> Unit)? = null) =
+    this.combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onDoubleClick)
