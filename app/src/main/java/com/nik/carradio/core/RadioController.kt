@@ -85,7 +85,9 @@ object RadioController : BackendHost {
      */
     fun startup(forceStart: Boolean = false) = scope.launch {
         val autoStart = prefs.autoStart || forceStart
-        val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() }
+        // A method that only opens another app is never a reason to skip trying the real tuner
+        // (1.0.0 remembered "stock" after an FYT tuning failure and never retried FYT).
+        val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() && !it.caps.contains(Cap.EXTERNAL_UI) }
         if (last != null) {
             val t0 = System.currentTimeMillis()
             val r = try { withTimeout(6000) { last.probe(this@RadioController) } } catch (e: Throwable) {
@@ -197,8 +199,7 @@ object RadioController : BackendHost {
                 b.powerOn(this, state.band, prefs.lastFreq(state.band))
             }
             if (ok) {
-                prefs.lastWorking = b.id
-                if (!b.caps.contains(Cap.EXTERNAL_UI)) prefs.wasPlaying = true
+                if (!b.caps.contains(Cap.EXTERNAL_UI)) { prefs.lastWorking = b.id; prefs.wasPlaying = true }
                 update { it.copy(powered = true, error = null) }
                 if (b.caps.contains(Cap.EXTERNAL_UI)) update { it.copy(powered = false) } else RadioService.start(app)
                 return
@@ -449,6 +450,20 @@ object RadioController : BackendHost {
     }
 
     private fun setError(e: UiError) = update { it.copy(error = e, status = e.title) }
+
+    private val _learn = MutableStateFlow<List<String>?>(null)
+    /** Result of the last "Learn tuner commands" run, shown in Diagnostics and the report. */
+    val learnResult: StateFlow<List<String>?> = _learn.asStateFlow()
+
+    fun learnFytCommands() = scope.launch {
+        val fyt = backends.first { it.id == "fyt" } as com.nik.carradio.backend.fyt.FytMcuBackend
+        if (active?.id != "fyt") selectInternal(fyt, persist = false)
+        if (!state.powered) powerOnInternal(autoFallback = false)
+        _learn.value = listOf("Running… (about 30 s, the radio will jump around)")
+        var lines: List<String> = emptyList()
+        exec("Learning tuner commands", timeoutMs = 90_000) { lines = fyt.learnCommands(this@RadioController) }
+        _learn.value = lines.ifEmpty { listOf("Failed – see the Log tab") }
+    }
 
     fun reenableCrashed() { prefs.clearCrashed(); AppLog.i("Crash blacklist cleared"); probeAll() }
 }

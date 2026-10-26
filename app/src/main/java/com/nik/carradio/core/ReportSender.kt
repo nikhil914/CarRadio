@@ -41,6 +41,10 @@ object ReportSender {
         appendLine("=== State ===")
         appendLine("backend=${s.backendId} powered=${s.powered} band=${s.band} freq=${s.freqKhz} status=${s.status}")
         s.error?.let { appendLine("error=${it.title} | ${it.hint}"); if (full) appendLine(it.technical.take(1500)) }
+        RadioController.learnResult.value?.let { l ->
+            appendLine(); appendLine("=== Learn tuner commands ==="); l.forEach { appendLine(it) }
+        }
+        appendLine("FYT learned: tune=${RadioController.prefs.fytVariant("tune")} step=${RadioController.prefs.fytVariant("step")} seek=${RadioController.prefs.fytVariant("seek")}")
         appendLine()
         appendLine("=== Log ===")
         AppLog.lines.value.takeLast(if (full) 400 else 60).forEach { appendLine(it) }

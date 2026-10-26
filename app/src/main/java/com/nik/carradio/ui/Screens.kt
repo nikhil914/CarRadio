@@ -304,9 +304,14 @@ fun DiagnosticsScreen() {
                     Text(r?.summary ?: if (probing) "checking…" else "not checked", fontSize = 15.sp)
                     if (!r?.hint.isNullOrBlank()) Text(r!!.hint, color = Amber, fontSize = 13.sp)
                     if (open) r?.details?.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Grey) }
+                    if (b.id == "fyt") {
+                        val learn by RadioController.learnResult.collectAsState()
+                        learn?.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = if ("MOVED" in it || "WORKS" in it) Green else Grey) }
+                    }
                     FlowRowCompat {
                         TextButton(onClick = { RadioController.select(b.id) }) { Text("Use this") }
                         TextButton(onClick = { RadioController.testBackend(b.id) }) { Text("Test start") }
+                        if (b.id == "fyt" && r?.status == ProbeStatus.AVAILABLE) TextButton(onClick = { RadioController.learnFytCommands() }) { Text("Learn tuner commands") }
                         if (!r?.details.isNullOrEmpty()) TextButton(onClick = { open = !open }) { Text(if (open) "Hide details" else "Details") }
                     }
                 }

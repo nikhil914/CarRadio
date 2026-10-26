@@ -175,7 +175,13 @@ class FytMcuBackend : RadioBackend {
         val confirmed = waitFor(2000) { appId == Syu.APP_ID_RADIO }
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
         host.update { it.copy(status = if (confirmed) "Playing via MCU tuner" else "Radio command sent (source not confirmed)") }
-        tune(host, band, khz)
+        // The radio is on once the MCU plays radio. A tuning problem must not throw the whole
+        // method away (1.0.0 fell back to the stock app here): report it and stay on FYT.
+        try { tune(host, band, khz) } catch (e: RadioException) {
+            if (!confirmed && reportedKhz <= 0) throw e
+            AppLog.w("FYT: radio is on at $reportedKhz kHz but tuning to $khz failed: ${e.title}")
+            host.update { it.copy(status = "Playing ${Freq.format(Freq.bandOf(reportedKhz.coerceAtLeast(1)), reportedKhz)} – tuning commands not accepted yet (Diagnostics → Learn tuner commands)") }
+        }
     }
 
     override suspend fun powerOff(host: BackendHost) {
@@ -200,27 +206,75 @@ class FytMcuBackend : RadioBackend {
 
     private fun currentBand(): Band? = reportedBand ?: reportedKhz.takeIf { it > 0 }?.let { Freq.bandOf(it) }
 
+    // ------------------------------------------------------------ command formats
+    // FYT firmwares differ in the payload each radio command expects. The FYT launcher always
+    // sends a value (next = cmd(0,[0]), band = cmd(11,[-1])); 1.0.0 sent step/seek with none
+    // and the UIS8141E service ignored them. Each operation now tries the known formats,
+    // checks the tuner really moved, and remembers the one that works on this unit.
+
+    private class Variant(val label: String, val send: (Syu.Module) -> Unit)
+
+    private fun tuneVariants(band: Band, target: Int): List<Variant> {
+        val v10 = if (band == Band.FM) target / 10 else target      // 98.1 MHz → 9810
+        val v100 = if (band == Band.FM) target / 100 else target    // 98.1 MHz → 981
+        return listOf(
+            Variant("cmd(13,[1,$v10])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10)) },
+            Variant("cmd(13,[$v10])") { it.cmd(Syu.C_FREQ, intArrayOf(v10)) },
+            Variant("cmd(13,[$v10,1])") { it.cmd(Syu.C_FREQ, intArrayOf(v10, Syu.FREQ_DIRECT)) },
+            Variant("cmd(13,[1,$target])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, target)) },
+            Variant("cmd(13,[1,$v100])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v100)) },
+            Variant("cmd(13,[1,$v10],flt)") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10), floatArrayOf(target / 1000f)) },
+        )
+    }
+
+    private fun stepVariants(up: Boolean): List<Variant> {
+        val c = if (up) Syu.C_FREQ_UP else Syu.C_FREQ_DOWN
+        val dir = if (up) 1 else -1
+        return listOf(
+            Variant("cmd($c,[0])") { it.cmd(c, intArrayOf(0)) },
+            Variant("cmd($c,[1])") { it.cmd(c, intArrayOf(1)) },
+            Variant("cmd(13,[0,$dir])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_BY_STEP, dir)) },
+            Variant("cmd($c)") { it.cmd(c) },
+        )
+    }
+
+    private fun seekVariants(up: Boolean): List<Variant> {
+        val c = if (up) Syu.C_SEEK_UP else Syu.C_SEEK_DOWN
+        return listOf(
+            Variant("cmd($c,[0])") { it.cmd(c, intArrayOf(0)) },
+            Variant("cmd($c,[1])") { it.cmd(c, intArrayOf(1)) },
+            Variant("cmd($c)") { it.cmd(c) },
+        )
+    }
+
+    /**
+     * Sends the learned variant of [op] (or tries all, learned first) until [done] is true.
+     * Returns the label that worked, or null.
+     */
+    private suspend fun runLearning(h: BackendHost, op: String, variants: List<Variant>, waitMs: Long, done: () -> Boolean): String? {
+        val learned = h.prefs.fytVariant(op)
+        val order = (listOfNotNull(variants.getOrNull(learned)?.let { learned }) + variants.indices).distinct()
+        for (i in order) {
+            val v = variants[i]
+            expect(waitMs + 1500)
+            runCatching { v.send(radio!!) }.onFailure { AppLog.w("FYT $op ${v.label}: send failed", it) }
+            if (waitFor(waitMs, done)) {
+                if (learned != i) { h.prefs.setFytVariant(op, i); AppLog.i("FYT: $op works with ${v.label} – remembered") }
+                return v.label
+            }
+            AppLog.w("FYT: $op ${v.label} – no change (reported=$reportedKhz)")
+        }
+        if (learned >= 0) h.prefs.setFytVariant(op, -1)
+        return null
+    }
+
     override suspend fun tune(host: BackendHost, band: Band, khz: Int) {
         ensure(host)
         val target = Freq.clamp(band, khz)
         if (currentBand() != null && currentBand() != band) setBand(host, band)
-        if (reportedKhz == target) return
-        val value = if (band == Band.FM) target / 10 else target
-        val learned = host.prefs.fytTuneMode
-        val modes = (listOf(learned) + listOf(0, 1)).filter { it >= 0 }.distinct()
-        for (mode in modes) {
-            expect()
-            when (mode) {
-                0 -> radio!!.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, value))
-                1 -> radio!!.cmd(Syu.C_FREQ, intArrayOf(value))
-            }
-            if (waitFor(1300) { abs(reportedKhz - target) < 5 }) {
-                if (learned != mode) { host.prefs.fytTuneMode = mode; AppLog.i("FYT: direct tune works with payload mode $mode – remembered") }
-                return
-            }
-            AppLog.w("FYT: direct tune mode $mode not confirmed (reported=$reportedKhz, target=$target)")
-        }
-        // Last resort: walk there with single steps. Always works if step commands work.
+        if (abs(reportedKhz - target) < 5) return
+        if (runLearning(host, "tune", tuneVariants(band, target), 1300) { abs(reportedKhz - target) < 5 } != null) return
+        // No direct format works: walk there with steps (needs a working step format).
         if (reportedKhz <= 0) {
             throw RadioException("Tuner does not report its frequency", "The radio module accepted commands but never reported back. Open the stock radio once, then retry.")
         }
@@ -228,31 +282,67 @@ class FytMcuBackend : RadioBackend {
         var guard = 0
         while (abs(reportedKhz - target) >= stepKhz && guard < 400) {
             val before = reportedKhz
-            expect()
-            radio!!.cmd(if (target > reportedKhz) Syu.C_FREQ_UP else Syu.C_FREQ_DOWN)
-            if (!waitFor(600) { reportedKhz != before }) {
-                throw RadioException("Tuner stopped responding while stepping to ${Freq.format(band, target)}", "Current ${Freq.format(band, reportedKhz)}. Try seek, or reconnect via Diagnostics.")
-            }
+            val up = target > reportedKhz
+            val ok = if (guard == 0) runLearning(host, "step", stepVariants(up), 900) { reportedKhz != before } != null
+                else { expect(); stepVariants(up)[host.prefs.fytVariant("step").coerceAtLeast(0)].send(radio!!); waitFor(900) { reportedKhz != before } }
+            if (!ok) throw RadioException("The tuner ignores tuning commands from Car Radio",
+                "It plays ${Freq.format(band, reportedKhz)}. Run Diagnostics → Learn tuner commands and send the report.")
             guard++
         }
-        AppLog.i("FYT: reached ${reportedKhz} kHz by stepping ($guard steps)")
+        AppLog.i("FYT: reached $reportedKhz kHz by stepping ($guard steps)")
     }
 
     override suspend fun seek(host: BackendHost, up: Boolean) {
-        ensure(host); expect(12_000); radio!!.cmd(if (up) Syu.C_SEEK_UP else Syu.C_SEEK_DOWN)
+        ensure(host)
+        val before = reportedKhz
+        if (runLearning(host, "seek", seekVariants(up), 4000) { reportedKhz != before } == null)
+            throw RadioException("Seek is not accepted by this tuner", "Run Diagnostics → Learn tuner commands and send the report.")
+        expect(12_000)   // the seek keeps moving after the first change
     }
 
     override suspend fun step(host: BackendHost, up: Boolean) {
         ensure(host)
         val before = reportedKhz
-        expect()
-        radio!!.cmd(if (up) Syu.C_FREQ_UP else Syu.C_FREQ_DOWN)
-        if (!waitFor(800) { reportedKhz != before }) super.step(host, up)
+        if (runLearning(host, "step", stepVariants(up), 900) { reportedKhz != before } == null) super.step(host, up)
     }
 
     override suspend fun scan(host: BackendHost) {
         ensure(host); expect(120_000); radio!!.cmd(Syu.C_SEARCH, intArrayOf(Syu.SEARCH_STATE_AUTO))
         host.update { it.copy(scanning = true) }
+    }
+
+    /**
+     * Diagnostics: tries every format of step, seek and direct tune once and reports which
+     * moved the tuner. Learned formats are saved. Ends back near the starting frequency.
+     */
+    suspend fun learnCommands(host: BackendHost): List<String> {
+        ensure(host)
+        host.prefs.clearFytVariants()
+        val out = mutableListOf<String>()
+        val start = reportedKhz
+        out += "Start: $start kHz, appId=$appId"
+        for ((label, v) in stepVariants(true).map { it.label to it }) {
+            val before = reportedKhz; expect(3000); v.send(radio!!)
+            out += "step up $label -> ${if (waitFor(1200) { reportedKhz != before }) "MOVED to $reportedKhz" else "no change"}"
+        }
+        for ((label, v) in seekVariants(true).map { it.label to it }) {
+            val before = reportedKhz; expect(15_000); v.send(radio!!)
+            out += "seek up $label -> ${if (waitFor(5000) { reportedKhz != before }) "MOVED to $reportedKhz" else "no change"}"
+            delay(1500)
+        }
+        val target = if (start in 87_600..107_900) start else 98_100
+        for (v in tuneVariants(Band.FM, target)) {
+            if (abs(reportedKhz - target) < 5) { expect(3000); runCatching { stepVariants(true)[0].send(radio!!) }; waitFor(1200) { reportedKhz != target } }
+            val before = reportedKhz; expect(3000); v.send(radio!!)
+            out += "tune ${v.label} -> ${if (waitFor(1500) { abs(reportedKhz - target) < 5 }) "WORKS" else "no (at $reportedKhz, from $before)"}"
+        }
+        out += "Next channel cmd(0,[0]) -> " + run { val b = reportedKhz; expect(3000); radio!!.cmd(Syu.C_NEXT_CHANNEL, intArrayOf(0)); if (waitFor(2000) { reportedKhz != b }) "MOVED to $reportedKhz" else "no change" }
+        out.forEach { AppLog.i("Learn: $it") }
+        // Save the first format of each kind that worked.
+        stepVariants(true).indexOfFirst { v -> out.any { it.startsWith("step up ${v.label} -> MOVED") } }.takeIf { it >= 0 }?.let { host.prefs.setFytVariant("step", it) }
+        seekVariants(true).indexOfFirst { v -> out.any { it.startsWith("seek up ${v.label} -> MOVED") } }.takeIf { it >= 0 }?.let { host.prefs.setFytVariant("seek", it) }
+        tuneVariants(Band.FM, target).indexOfFirst { v -> out.any { it.startsWith("tune ${v.label} -> WORKS") } }.takeIf { it >= 0 }?.let { host.prefs.setFytVariant("tune", it) }
+        return out
     }
 
     override fun release(host: BackendHost) {
