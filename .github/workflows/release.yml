@@ -26,7 +26,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Test, lint and build release
-        run: ./gradlew testDebugUnitTest lintDebug assembleRelease
+        run: ./gradlew testDebugUnitTest lintDebug :app:assembleRelease :radioproxy:assembleRelease
 
       - name: Name the APK
         id: apk
@@ -38,6 +38,8 @@ jobs:
           fi
           OUT="CarRadio-$VERSION.apk"
           cp app/build/outputs/apk/release/app-release.apk "$OUT"
+          cp radioproxy/build/outputs/apk/aospTestkey/release/radioproxy-aospTestkey-release.apk CarRadio-proxy-aospTestkey.apk
+          cp radioproxy/build/outputs/apk/aospPlatform/release/radioproxy-aospPlatform-release.apk CarRadio-proxy-aospPlatform.apk
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "file=$OUT" >> "$GITHUB_OUTPUT"
           echo "sha=$(sha256sum "$OUT" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
@@ -48,11 +50,14 @@ jobs:
         run: |
           NOTES="Signed release APK (sideload key). Installs over earlier versions.
 
-          SHA-256: \`${{ steps.apk.outputs.sha }}\`"
+          SHA-256: \`${{ steps.apk.outputs.sha }}\`
+
+          Optional Radio-key proxy (replaces the unit's com.syu.radio so its Radio icon opens Car Radio).
+          Install only the one named in Car Radio → Settings → Radio key. Undo: Settings → Apps → Radio → Uninstall updates."
           if gh release view "${{ steps.apk.outputs.tag }}" >/dev/null 2>&1; then
-            gh release upload "${{ steps.apk.outputs.tag }}" "${{ steps.apk.outputs.file }}" --clobber
+            gh release upload "${{ steps.apk.outputs.tag }}" "${{ steps.apk.outputs.file }}" CarRadio-proxy-*.apk --clobber
           else
-            gh release create "${{ steps.apk.outputs.tag }}" "${{ steps.apk.outputs.file }}" \
+            gh release create "${{ steps.apk.outputs.tag }}" "${{ steps.apk.outputs.file }}" CarRadio-proxy-*.apk \
               --target "${{ github.sha }}" --title "Car Radio ${{ steps.apk.outputs.tag }}" \
               --notes "$NOTES" --generate-notes
           fi

@@ -28,6 +28,12 @@ Built first for an **FYT UIS8141E (SC7731E)** unit (reports "Android 13", really
 - **Persistent log**: every step is written to a file. The Log tab and "Share report" show the full trail, including the step that was running if the app was killed.
 - **Diagnostics tab**: per-method status (WORKS / MAYBE / BLOCKED / NO / CRASHED), with technical details, "Use this", "Test start", device properties, vendor packages, `libfmjni` and `/dev` nodes.
 
+## System hooks (0.5.0)
+
+- **Home-screen widgets:** wide (4×1) and square (2×2), each with the logo or drawn initials, the station, frequency and RDS line, plus previous, on/off and next. They are plain RemoteViews: nothing runs for them, and they redraw only on a visible change (debounced), and only when a widget is placed.
+- **Resume:** if the radio was on when the unit went down, it comes back on cold boot (`BOOT_COMPLETED` / quick boot) and on ACC on (FYT main-module update 50). Only an explicit "off" clears that state. It never starts the media foreground service from boot on Android 15+. Switch it off in Settings.
+- **Radio-key proxy (`radioproxy/`):** a 9 KB app with package `com.syu.radio` and the same activity names as the FYT radio, which opens Car Radio. It installs as an update to the firmware's radio app only when signed with the same key, so it is built with both public AOSP keys (`keystore/aosp/testkey.jks`, `platform.jks`, from AOSP `build/target/product/security`, password `android`). Car Radio → Settings → Radio key compares the firmware app's signing certificate with these keys and tells you which file will install, or that none will. Undo: Settings → Apps → Radio → Uninstall updates. Car Radio never launches its own proxy as "the stock radio".
+
 ## Look and logos (0.4.0)
 
 - **Three layouts**, switchable in Settings → Appearance with a live preview: grid (2–6 columns), list, and carousel (snaps, and follows the playing station when the wheel keys change it).

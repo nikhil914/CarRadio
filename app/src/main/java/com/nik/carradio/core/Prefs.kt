@@ -31,6 +31,16 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("auto_start", true)
         set(v) = sp.edit().putBoolean("auto_start", v).apply()
 
+    /** Resume the radio when the unit boots or wakes (ACC on) if it was playing before. */
+    var resumeOnStart: Boolean
+        get() = sp.getBoolean("resume_on_start", true)
+        set(v) = sp.edit().putBoolean("resume_on_start", v).apply()
+
+    /** True while the radio is on; cleared only by an explicit "off" (ACC off keeps it). */
+    var wasPlaying: Boolean
+        get() = sp.getBoolean("was_playing", false)
+        set(v) { sp.edit().putBoolean("was_playing", v).commit() }
+
     /** Steering-wheel next/prev move through the user's station group (FYT redirect). */
     var wheelUsesStations: Boolean
         get() = sp.getBoolean("wheel_stations", true)

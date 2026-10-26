@@ -83,7 +83,8 @@ object RadioController : BackendHost {
      * start it. The full 7-method probe runs only on first launch, after a failure, or from
      * Diagnostics.
      */
-    fun startup() = scope.launch {
+    fun startup(forceStart: Boolean = false) = scope.launch {
+        val autoStart = prefs.autoStart || forceStart
         val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() }
         if (last != null) {
             val t0 = System.currentTimeMillis()
@@ -94,7 +95,7 @@ object RadioController : BackendHost {
             _probes.update { it + (last.id to r) }
             if (r.usable || r.status == ProbeStatus.UNKNOWN) {
                 selectInternal(last, persist = false)
-                if (!prefs.autoStart || last.caps.contains(Cap.EXTERNAL_UI)) return@launch
+                if (!autoStart || last.caps.contains(Cap.EXTERNAL_UI)) return@launch
                 powerOnInternal(autoFallback = false)
                 if (state.powered) return@launch
                 AppLog.w("Fast start: ${last.id} failed to start – running the full probe to find another method")
@@ -102,7 +103,7 @@ object RadioController : BackendHost {
                 AppLog.w("Fast start: ${last.id} no longer works – running the full probe")
             }
         }
-        probeAllInternal(thenAutoStart = true)
+        probeAllInternal(thenAutoStart = true, forceStart = forceStart)
     }
 
     /** True when Diagnostics should run the full probe because only the fast path ran. */
@@ -110,7 +111,7 @@ object RadioController : BackendHost {
 
     fun probeAll(thenAutoStart: Boolean = false) = scope.launch { probeAllInternal(thenAutoStart) }
 
-    private suspend fun probeAllInternal(thenAutoStart: Boolean) {
+    private suspend fun probeAllInternal(thenAutoStart: Boolean, forceStart: Boolean = false) {
         _probing.value = true
         AppLog.i("Probing all radio methods…")
         DeviceInfo.report(app).forEach { AppLog.i("  $it") }
@@ -135,7 +136,7 @@ object RadioController : BackendHost {
                     results.entries.joinToString("\n") { "${it.key}: ${it.value.status} ${it.value.summary}" }, null))
             } else {
                 selectInternal(first, persist = false)
-                if (prefs.autoStart && first.caps.none { it == Cap.EXTERNAL_UI }) powerOnInternal(autoFallback = true)
+                if ((prefs.autoStart || forceStart) && first.caps.none { it == Cap.EXTERNAL_UI }) powerOnInternal(autoFallback = true)
             }
         }
     }
@@ -197,6 +198,7 @@ object RadioController : BackendHost {
             }
             if (ok) {
                 prefs.lastWorking = b.id
+                if (!b.caps.contains(Cap.EXTERNAL_UI)) prefs.wasPlaying = true
                 update { it.copy(powered = true, error = null) }
                 if (b.caps.contains(Cap.EXTERNAL_UI)) update { it.copy(powered = false) } else RadioService.start(app)
                 return
@@ -210,6 +212,7 @@ object RadioController : BackendHost {
     }
 
     fun powerOff() = scope.launch {
+        prefs.wasPlaying = false
         val b = active ?: return@launch
         exec("Stopping") { b.powerOff(this@RadioController) }
         update { it.copy(powered = false, status = "Radio off", scanning = false) }
@@ -273,6 +276,20 @@ object RadioController : BackendHost {
         pendingStep = next.band to next.freqKhz
         AppLog.i("Wheel ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
         tune(next.freqKhz, next.band).invokeOnCompletion { pendingStep = null }
+    }
+
+    override fun onAccChanged(on: Boolean) {
+        if (!on) { AppLog.i("ACC off: radio state kept for resume (wasPlaying=${prefs.wasPlaying})"); return }
+        if (!prefs.resumeOnStart || !prefs.wasPlaying) return
+        AppLog.i("ACC on: re-claiming the radio source and last station")
+        scope.launch { powerOnInternal(autoFallback = false) }
+    }
+
+    /** Boot: if the radio was on when the unit went down, bring it back. */
+    fun resumeAfterBoot() {
+        if (!prefs.resumeOnStart || !prefs.wasPlaying) { AppLog.i("Boot: not resuming (resume=${prefs.resumeOnStart}, wasPlaying=${prefs.wasPlaying})"); return }
+        AppLog.i("Boot: resuming the radio")
+        if (_probes.value.isEmpty()) startup(forceStart = true) else powerOn()
     }
 
     fun playStation(s: Station) = tune(s.freqKhz, s.band)
