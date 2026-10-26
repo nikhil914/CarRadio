@@ -59,6 +59,15 @@ object StationStore {
     }
 
     fun exportJson(): String = toJson(_data.value).toString(2)
+    fun exportObject(): JSONObject = toJson(_data.value)
+
+    /** Replace everything with a backup (validated by the caller). */
+    fun importObject(o: JSONObject): StationData {
+        val d = fromJson(o)
+        _data.value = d
+        writeNow(d)
+        return d
+    }
 
     private fun toJson(d: StationData) = JSONObject().apply {
         put("version", 1)
@@ -69,7 +78,7 @@ object StationStore {
             d.stations.forEach { s ->
                 put(JSONObject().put("id", s.id).put("band", s.band.name).put("khz", s.freqKhz).put("name", s.name)
                     .put("pi", s.pi).put("fav", s.favourite).put("pos", s.position).put("verified", s.verified)
-                    .put("groups", JSONArray(s.groups.toList())))
+                    .put("groups", JSONArray(s.groups.toList())).put("af", JSONArray(s.afKhz)))
             }
         })
     }
@@ -82,7 +91,8 @@ object StationStore {
                 Station(j.getLong("id"), runCatching { Band.valueOf(j.getString("band")) }.getOrDefault(Band.FM), j.getInt("khz"),
                     j.optString("name"), j.optInt("pi"), j.optBoolean("fav"),
                     j.optJSONArray("groups")?.let { g -> (0 until g.length()).map { g.getString(it) }.toSet() } ?: emptySet(),
-                    j.optInt("pos"), j.optBoolean("verified", true))
+                    j.optInt("pos"), j.optBoolean("verified", true),
+                    j.optJSONArray("af")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList())
             }
         } ?: emptyList()
         return StationData(stations, groups, o.optString("selectedGroup", StationLogic.ALL),

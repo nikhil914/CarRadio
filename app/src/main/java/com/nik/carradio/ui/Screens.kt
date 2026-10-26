@@ -374,36 +374,53 @@ fun SettingsScreen() {
     val crashed = remember { mutableStateOf(prefs.crashedBackends()) }
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         AppearanceSettings()
+        DayNightSettings()
+
+        SectionHeader("Radio")
         Text("FM step", fontWeight = FontWeight.Bold)
         FlowRowCompat { listOf(50, 100, 200).forEach { v -> FilterChip(selected = fmStep == v, onClick = { fmStep = v; prefs.fmStepKhz = v }, label = { Text("$v kHz") }) } }
         Text("AM step", fontWeight = FontWeight.Bold)
         FlowRowCompat { listOf(9, 10).forEach { v -> FilterChip(selected = amStep == v, onClick = { amStep = v; prefs.amStepKhz = v }, label = { Text("$v kHz") }) } }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Start radio automatically when the app opens", modifier = Modifier.weight(1f))
-            Switch(checked = auto, onCheckedChange = { auto = it; prefs.autoStart = it })
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Steering-wheel next/prev go through my station group", modifier = Modifier.weight(1f))
-            Switch(checked = wheel, onCheckedChange = { wheel = it; prefs.wheelUsesStations = it })
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Resume the radio when the unit starts or wakes, if it was playing", modifier = Modifier.weight(1f))
-            Switch(checked = resume, onCheckedChange = { resume = it; prefs.resumeOnStart = it })
-        }
-        OutlinedButton(onClick = { copyText(ctx, com.nik.carradio.core.StationStore.exportJson()) }) { Text("Copy station list (JSON backup)") }
+        SwitchRow("Start radio automatically when the app opens", auto) { auto = it; prefs.autoStart = it }
+        SwitchRow("Resume the radio when the unit starts or wakes, if it was playing", resume) { resume = it; prefs.resumeOnStart = it }
+        SwitchRow("Steering-wheel next/prev go through my station group", wheel) { wheel = it; prefs.wheelUsesStations = it }
+
+        SectionHeader("Stations and backup")
+        BackupSection()
+
+        SectionHeader("Radio key")
         RadioKeySection()
-        Text("Internet radio stream URL (fallback method)", fontWeight = FontWeight.Bold)
-        OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("http(s)://…") })
+
+        SectionHeader("Internet radio (fallback)")
+        OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Stream URL http(s)://…") })
         Button(onClick = { prefs.streamUrl = url; AppLog.i("Stream URL saved"); RadioController.probeAll() }) { Text("Save URL") }
-        Text("GitHub report upload", fontWeight = FontWeight.Bold)
-        Text("Paste a fine-grained token with \"Issues: Read and write\" on the repo below. It stays on this unit only.", color = Grey, fontSize = 13.sp)
+
+        SectionHeader("Reports")
+        Text("GitHub upload: paste a fine-grained token with \"Issues: Read and write\" on the repo below. It stays on this unit only and is never put in backups.", color = Grey, fontSize = 13.sp)
         OutlinedTextField(repo, { repo = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Repository (owner/name)") })
         OutlinedTextField(token, { token = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Token") },
             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
         Button(onClick = { prefs.githubRepo = repo; prefs.githubToken = token; AppLog.i("GitHub upload settings saved (token ${if (token.isBlank()) "cleared" else "set"})") }) { Text("Save GitHub settings") }
+
+        SectionHeader("Advanced")
         Text("Methods disabled after a crash: " + crashed.value.ifEmpty { setOf("none") }.joinToString(), color = Grey)
         OutlinedButton(enabled = crashed.value.isNotEmpty(), onClick = { RadioController.reenableCrashed(); crashed.value = emptySet() }) { Text("Re-enable crashed methods") }
         Text("Version ${BuildConfig.VERSION_NAME} · Android ${DeviceInfo.realAndroid()} (reported: ${android.os.Build.VERSION.RELEASE})", color = Grey, fontSize = 12.sp)
+    }
+}
+
+@Composable
+internal fun SectionHeader(title: String) {
+    Spacer(Modifier.height(8.dp))
+    Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+    Box(Modifier.fillMaxWidth().height(1.dp).background(Grey.copy(alpha = .25f)))
+}
+
+@Composable
+internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -412,7 +429,6 @@ fun SettingsScreen() {
 private fun RadioKeySection() {
     val ctx = LocalContext.current
     val verdict by produceState("Checking…") { value = withContext(Dispatchers.IO) { DeviceInfo.proxyVerdict(ctx) } }
-    Text("Radio key and Radio icon", fontWeight = FontWeight.Bold)
     Text(verdict, fontSize = 14.sp)
     Text("The proxy is a tiny separate app (CarRadio-proxy-*.apk on the GitHub release page) that installs as an update to the unit's own radio app, " +
         "so the Radio icon and the hardware Radio key open Car Radio. Android only accepts it if the key matches – the line above says which file to use. " +

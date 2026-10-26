@@ -19,6 +19,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import com.nik.carradio.core.RadioController
 import com.nik.carradio.core.UiConfig
+import com.nik.carradio.core.CarSignals
+import com.nik.carradio.core.DayNight
+import com.nik.carradio.core.UiSettings
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import java.util.Calendar
+import java.util.TimeZone
+import kotlinx.coroutines.delay
 import com.nik.carradio.core.ReportSender
 
 class MainActivity : ComponentActivity() {
@@ -30,7 +40,10 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val ui by UiConfig.settings.collectAsState()
-            val scheme = remember(ui.themeId) { themeById(ui.themeId).scheme() }
+            val lights by CarSignals.headlights.collectAsState()
+            val night = rememberNight(ui, lights)
+            val themeId = if (night) ui.nightThemeId else ui.themeId
+            val scheme = remember(themeId) { themeById(themeId).scheme() }
             val density = LocalDensity.current
             // Text size setting scales fonts only, never touch targets.
             CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * ui.textScale)) {
@@ -38,6 +51,23 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+/** Re-evaluated on each minute boundary and whenever settings or the headlights change. */
+@Composable
+fun rememberNight(ui: UiSettings, lights: Boolean?): Boolean {
+    var night by remember { mutableStateOf(false) }
+    LaunchedEffect(ui.nightMode, ui.nightStart, ui.nightEnd, lights) {
+        while (true) {
+            val c = Calendar.getInstance()
+            val now = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE)
+            val off = TimeZone.getDefault().getOffset(c.timeInMillis) / 60_000
+            val sun = DayNight.sunTimes(c.get(Calendar.DAY_OF_YEAR), DayNight.DEFAULT_LAT, DayNight.DEFAULT_LON, off)
+            night = DayNight.isNight(ui.nightMode, now, ui.nightStart, ui.nightEnd, sun, lights)
+            delay(60_000 - System.currentTimeMillis() % 60_000 + 100)
+        }
+    }
+    return night
 }
 
 fun buildReport(ctx: Context): String = ReportSender.build(ctx, full = true)
