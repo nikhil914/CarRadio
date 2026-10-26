@@ -28,6 +28,7 @@ class RadioException(
     cause: Throwable? = null,
 ) : Exception(title, cause)
 
+@androidx.compose.runtime.Immutable
 data class UiError(
     val title: String,
     val hint: String,
@@ -35,6 +36,7 @@ data class UiError(
     val backendId: String?,
 )
 
+@androidx.compose.runtime.Immutable
 data class RadioState(
     val backendId: String? = null,
     val backendName: String = "No radio method selected",

@@ -28,6 +28,22 @@ Built first for an **FYT UIS8141E (SC7731E)** unit (reports "Android 13", really
 - **Persistent log**: every step is written to a file. The Log tab and "Share report" show the full trail, including the step that was running if the app was killed.
 - **Diagnostics tab**: per-method status (WORKS / MAYBE / BLOCKED / NO / CRASHED), with technical details, "Use this", "Test start", device properties, vendor packages, `libfmjni` and `/dev` nodes.
 
+## Sending the diagnostics report (no USB needed)
+
+Diagnostics → **Send report** offers:
+
+- **QR codes (offline):** the report is split into numbered ASCII pages of 1,000 characters, one QR code each. Scan every page with your phone camera and paste the text.
+- **GitHub issue:** one tap, once a fine-grained token with *Issues: Read and write* on this repo is saved under Settings → GitHub report upload. The token lives only on the unit and is never in the APK, because this repo is public. Issues are public too: the report contains device and firmware details, not personal data.
+- **Share sheet / clipboard:** WhatsApp, Gmail, Telegram, or any app on the unit.
+
+## Performance (0.2.0)
+
+- R8 shrinking: the release APK dropped from 6.6 MB to 1.2 MB.
+- `profileinstaller` installs the baseline profiles that ship with Compose on first run. On Android 7–8.1, ART compiles them during idle dexopt.
+- Fast start: only the method that worked last time is probed at launch. The full probe of all 7 methods runs on first launch, after a failure, or when Diagnostics opens.
+- Buffered log: info lines are flushed every 2 s. Risky-step markers, warnings and errors are flushed immediately, so crash breadcrumbs survive.
+- Device-info queries run off the main thread. Presets no longer recompose on every RDS update.
+
 ## First run in the car
 
 1. Install `CarRadio-<version>.apk` (sideload, allow unknown sources).

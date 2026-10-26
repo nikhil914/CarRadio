@@ -47,7 +47,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -112,13 +115,13 @@ fun RadioScreen(onOpenDiagnostics: () -> Unit) {
                 Column(Modifier.weight(1.4f).fillMaxSize().verticalScroll(rememberScrollState())) {
                     MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
                 }
-                Column(Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState())) { Presets(s) }
+                Column(Modifier.weight(1f).fillMaxSize().verticalScroll(rememberScrollState())) { Presets(s.freqKhz, s.status) }
             }
         } else {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 MainPanel(s, probing, onOpenDiagnostics) { showEntry = true }
                 Spacer(Modifier.height(16.dp))
-                Presets(s)
+                Presets(s.freqKhz, s.status)
             }
         }
     }
@@ -199,18 +202,18 @@ private fun ErrorCard(e: UiError, onOpenDiagnostics: () -> Unit) {
 }
 
 @Composable
-private fun Presets(s: RadioState) {
+private fun Presets(freqKhz: Int, status: String) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     var tick by remember { mutableIntStateOf(0) }
     Text("Presets  (tap = play, long-press = save current)", color = Grey, fontSize = 13.sp)
     Spacer(Modifier.height(6.dp))
-    val values = remember(tick, s.status) { prefs.presets() }
+    val values = remember(tick, status) { prefs.presets() }
     values.chunked(3).forEachIndexed { row, chunk ->
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
             chunk.forEachIndexed { col, khz ->
                 val slot = row * 3 + col
-                val active = khz > 0 && khz == s.freqKhz
+                val active = khz > 0 && khz == freqKhz
                 Box(
                     Modifier.weight(1f).height(64.dp)
                         .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = .35f) else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
@@ -254,13 +257,17 @@ fun DiagnosticsScreen() {
     val probes by RadioController.probes.collectAsState()
     val probing by RadioController.probing.collectAsState()
     val s by RadioController.stateFlow.collectAsState()
-    val device = remember(probes) { DeviceInfo.report(ctx) }
+    // Device facts need PackageManager queries: compute once, off the main thread.
+    val device by produceState(emptyList<String>()) { value = withContext(Dispatchers.IO) { DeviceInfo.report(ctx) } }
+    var sending by remember { mutableStateOf(false) }
+    // The fast start probes only the last working method; complete the picture on first visit.
+    LaunchedEffect(Unit) { if (RadioController.needsFullProbe()) RadioController.probeAll() }
+    if (sending) SendReportDialog { sending = false }
     LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             FlowRowCompat {
-                Button(onClick = { RadioController.probeAll() }, enabled = !probing) { Text(if (probing) "Checking…" else "Run checks again") }
-                OutlinedButton(onClick = { copyText(ctx, buildReport(ctx)) }) { Text("Copy report") }
-                OutlinedButton(onClick = { shareText(ctx, buildReport(ctx)) }) { Text("Share report") }
+                Button(onClick = { sending = true }) { Text("Send report") }
+                OutlinedButton(onClick = { RadioController.probeAll() }, enabled = !probing) { Text(if (probing) "Checking…" else "Run checks again") }
                 OutlinedButton(onClick = { RadioController.useAutomatic() }) { Text("Use automatic choice") }
             }
             Text("Active: ${s.backendName}" + (RadioController.prefs.preferredBackend?.let { " (pinned)" } ?: " (automatic)"), color = Grey)
@@ -342,6 +349,8 @@ fun SettingsScreen() {
     var amStep by remember { mutableIntStateOf(prefs.amStepKhz) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
     var url by remember { mutableStateOf(prefs.streamUrl) }
+    var repo by remember { mutableStateOf(prefs.githubRepo) }
+    var token by remember { mutableStateOf(prefs.githubToken) }
     val crashed = remember { mutableStateOf(prefs.crashedBackends()) }
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("FM step", fontWeight = FontWeight.Bold)
@@ -355,6 +364,12 @@ fun SettingsScreen() {
         Text("Internet radio stream URL (fallback method)", fontWeight = FontWeight.Bold)
         OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("http(s)://…") })
         Button(onClick = { prefs.streamUrl = url; AppLog.i("Stream URL saved"); RadioController.probeAll() }) { Text("Save URL") }
+        Text("GitHub report upload", fontWeight = FontWeight.Bold)
+        Text("Paste a fine-grained token with \"Issues: Read and write\" on the repo below. It stays on this unit only.", color = Grey, fontSize = 13.sp)
+        OutlinedTextField(repo, { repo = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Repository (owner/name)") })
+        OutlinedTextField(token, { token = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Token") },
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+        Button(onClick = { prefs.githubRepo = repo; prefs.githubToken = token; AppLog.i("GitHub upload settings saved (token ${if (token.isBlank()) "cleared" else "set"})") }) { Text("Save GitHub settings") }
         Text("Methods disabled after a crash: " + crashed.value.ifEmpty { setOf("none") }.joinToString(), color = Grey)
         OutlinedButton(enabled = crashed.value.isNotEmpty(), onClick = { RadioController.reenableCrashed(); crashed.value = emptySet() }) { Text("Re-enable crashed methods") }
         Text("Version ${BuildConfig.VERSION_NAME} · Android ${DeviceInfo.realAndroid()} (reported: ${android.os.Build.VERSION.RELEASE})", color = Grey, fontSize = 12.sp)

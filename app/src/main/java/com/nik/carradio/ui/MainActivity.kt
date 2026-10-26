@@ -13,16 +13,15 @@ import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
-import com.nik.carradio.core.AppLog
-import com.nik.carradio.core.DeviceInfo
 import com.nik.carradio.core.RadioController
+import com.nik.carradio.core.ReportSender
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         if (savedInstanceState == null && RadioController.probes.value.isEmpty()) {
-            RadioController.probeAll(thenAutoStart = true)
+            RadioController.startup()
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
@@ -34,25 +33,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-fun buildReport(ctx: Context): String = buildString {
-    appendLine("=== Car Radio diagnostics ===")
-    DeviceInfo.report(ctx).forEach { appendLine(it) }
-    appendLine()
-    appendLine("=== Probe results ===")
-    RadioController.probes.value.forEach { (id, r) ->
-        appendLine("[$id] ${r.status}: ${r.summary}")
-        if (r.hint.isNotBlank()) appendLine("   hint: ${r.hint}")
-        r.details.forEach { appendLine("   $it") }
-    }
-    val s = RadioController.state
-    appendLine()
-    appendLine("=== State ===")
-    appendLine("backend=${s.backendId} powered=${s.powered} band=${s.band} freq=${s.freqKhz} status=${s.status}")
-    s.error?.let { appendLine("error=${it.title} | ${it.hint} | ${it.technical.take(600)}") }
-    appendLine()
-    appendLine("=== Log (last 300 lines) ===")
-    AppLog.lines.value.takeLast(300).forEach { appendLine(it) }
-}
+fun buildReport(ctx: Context): String = ReportSender.build(ctx, full = true)
 
 fun copyText(ctx: Context, text: String) {
     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

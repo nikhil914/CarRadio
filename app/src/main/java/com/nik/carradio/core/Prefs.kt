@@ -35,6 +35,19 @@ class Prefs(context: Context) {
         get() = sp.getString("stream_url", "") ?: ""
         set(v) = sp.edit().putString("stream_url", v.trim()).apply()
 
+    /** Backend that last started successfully: probed alone at launch (fast path). */
+    var lastWorking: String?
+        get() = sp.getString("last_working", null)
+        set(v) = sp.edit().putString("last_working", v).apply()
+
+    var githubToken: String
+        get() = sp.getString("gh_token", "") ?: ""
+        set(v) = sp.edit().putString("gh_token", v.trim()).apply()
+
+    var githubRepo: String
+        get() = sp.getString("gh_repo", "nikhil914/CarRadio") ?: "nikhil914/CarRadio"
+        set(v) = sp.edit().putString("gh_repo", v.trim()).apply()
+
     /** Which FYT direct-tune payload worked on this unit (learned at runtime). */
     var fytTuneMode: Int
         get() = sp.getInt("fyt_tune_mode", -1)

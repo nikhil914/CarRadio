@@ -77,7 +77,39 @@ object RadioController : BackendHost {
 
     // ------------------------------------------------------------------ probing / selection
 
-    fun probeAll(thenAutoStart: Boolean = false) = scope.launch {
+    /**
+     * Launch path. If a method worked last time, probe only that one (one bind, ~100 ms) and
+     * start it. The full 7-method probe runs only on first launch, after a failure, or from
+     * Diagnostics.
+     */
+    fun startup() = scope.launch {
+        val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() }
+        if (last != null) {
+            val t0 = System.currentTimeMillis()
+            val r = try { withTimeout(6000) { last.probe(this@RadioController) } } catch (e: Throwable) {
+                ProbeResult(ProbeStatus.UNAVAILABLE, "Probe failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            AppLog.i("Fast start: probed ${last.id} only (${System.currentTimeMillis() - t0} ms): ${r.status}")
+            _probes.update { it + (last.id to r) }
+            if (r.usable || r.status == ProbeStatus.UNKNOWN) {
+                selectInternal(last, persist = false)
+                if (!prefs.autoStart || last.caps.contains(Cap.EXTERNAL_UI)) return@launch
+                powerOnInternal(autoFallback = false)
+                if (state.powered) return@launch
+                AppLog.w("Fast start: ${last.id} failed to start – running the full probe to find another method")
+            } else {
+                AppLog.w("Fast start: ${last.id} no longer works – running the full probe")
+            }
+        }
+        probeAllInternal(thenAutoStart = true)
+    }
+
+    /** True when Diagnostics should run the full probe because only the fast path ran. */
+    fun needsFullProbe() = _probes.value.size < backends.size && !_probing.value
+
+    fun probeAll(thenAutoStart: Boolean = false) = scope.launch { probeAllInternal(thenAutoStart) }
+
+    private suspend fun probeAllInternal(thenAutoStart: Boolean) {
         _probing.value = true
         AppLog.i("Probing all radio methods…")
         DeviceInfo.report(app).forEach { AppLog.i("  $it") }
@@ -163,6 +195,7 @@ object RadioController : BackendHost {
                 b.powerOn(this, state.band, prefs.lastFreq(state.band))
             }
             if (ok) {
+                prefs.lastWorking = b.id
                 update { it.copy(powered = true, error = null) }
                 if (b.caps.contains(Cap.EXTERNAL_UI)) update { it.copy(powered = false) } else RadioService.start(app)
                 return
