@@ -13,8 +13,8 @@ android {
         // Head units in the field run Android 6 – 13; 21 keeps even very old units installable.
         minSdk = 21
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     signingConfigs {
@@ -74,5 +74,7 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     // MediaSessionCompat: steering-wheel keys + launcher metadata. Lighter than Media3 (no player).
     implementation("androidx.media:media:1.7.0")
+    // Folder picker for importing a logo pack (SAF tree URIs).
+    implementation("androidx.documentfile:documentfile:1.0.1")
     testImplementation("junit:junit:4.13.2")
 }

@@ -18,5 +18,7 @@ class App : Application() {
         AppLog.i("==== App start ${BuildConfig.VERSION_NAME} on Android ${DeviceInfo.realAndroid()} (${android.os.Build.MODEL}) ====")
         RadioController.init(this)
         StationStore.load(this, RadioController.prefs)
+        com.nik.carradio.core.UiConfig.init(this)
+        com.nik.carradio.ui.LogoStore.init(this)
     }
 }

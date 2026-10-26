@@ -28,6 +28,13 @@ Built first for an **FYT UIS8141E (SC7731E)** unit (reports "Android 13", really
 - **Persistent log**: every step is written to a file. The Log tab and "Share report" show the full trail, including the step that was running if the app was killed.
 - **Diagnostics tab**: per-method status (WORKS / MAYBE / BLOCKED / NO / CRASHED), with technical details, "Use this", "Test start", device properties, vendor packages, `libfmjni` and `/dev` nodes.
 
+## Look and logos (0.4.0)
+
+- **Three layouts**, switchable in Settings → Appearance with a live preview: grid (2–6 columns), list, and carousel (snaps, and follows the playing station when the wheel keys change it).
+- **8 flat dark themes:** Ocean, Emerald, Amber, Crimson, Violet, Teal, Graphite, and Night red for night driving. Four text sizes: only fonts scale, touch targets stay the same size.
+- **Full screen:** double-tap the frequency, or let it open after 15, 30 or 60 s without a touch while playing. It shows a big frequency, the name, the logo, the programme type or radio text, and a clock. Tap the left or right third to change station, the middle to close. The system bars are hidden.
+- **Logos:** long-press a station → Choose logo, or Settings → Import logo folder (files named after the station, e.g. `Virgin Radio.png`, `virgin.png`, `104.4.png`). Each logo is fitted to 96×96 and stored as WebP, decoded with subsampling, and cached in an LRU. No logos ship with the app, because they are the stations' trademarks. Without one, the station's initials are drawn on a colour derived from its name.
+
 ## Stations and wheel keys (0.3.0)
 
 - **Station groups (playlists):** Hindi, English, Arabic, Malayalam, plus your own (`+ Group`; long-press a group of your own to delete it). Also All, Favourites and Unsorted. One station can sit in several groups.

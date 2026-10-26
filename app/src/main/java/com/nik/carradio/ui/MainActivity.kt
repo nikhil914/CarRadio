@@ -11,9 +11,14 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import com.nik.carradio.core.RadioController
+import com.nik.carradio.core.UiConfig
 import com.nik.carradio.core.ReportSender
 
 class MainActivity : ComponentActivity() {
@@ -24,11 +29,13 @@ class MainActivity : ComponentActivity() {
             RadioController.startup()
         }
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(
-                primary = Color(0xFF42A5F5), secondary = Color(0xFF26C6DA),
-                background = Color(0xFF101418), surface = Color(0xFF1A2027),
-                surfaceVariant = Color(0xFF232B33), error = Color(0xFFEF5350),
-            )) { AppRoot() }
+            val ui by UiConfig.settings.collectAsState()
+            val scheme = remember(ui.themeId) { themeById(ui.themeId).scheme() }
+            val density = LocalDensity.current
+            // Text size setting scales fonts only, never touch targets.
+            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * ui.textScale)) {
+                MaterialTheme(colorScheme = scheme) { AppRoot() }
+            }
         }
     }
 }
