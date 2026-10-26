@@ -64,9 +64,9 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putString("gh_repo", v.trim()).apply()
 
     /** Learned FYT command format per operation ("tune", "step", "seek"); -1 = not learned. */
-    fun fytVariant(op: String): Int = sp.getInt("fyt_v_$op", -1)
-    fun setFytVariant(op: String, v: Int) = sp.edit().putInt("fyt_v_$op", v).apply()
-    fun clearFytVariants() = sp.edit().remove("fyt_v_tune").remove("fyt_v_step").remove("fyt_v_seek").apply()
+    fun fytVariant(op: String): Int = sp.getInt("fyt_v2_$op", -1)
+    fun setFytVariant(op: String, v: Int) = sp.edit().putInt("fyt_v2_$op", v).apply()
+    fun clearFytVariants() = sp.edit().remove("fyt_v2_tune").remove("fyt_v2_step").remove("fyt_v2_seek").apply()
 
     /** Which FYT direct-tune payload worked on this unit (learned at runtime). */
     var fytTuneMode: Int

@@ -214,27 +214,30 @@ class FytMcuBackend : RadioBackend {
 
     private class Variant(val label: String, val send: (Syu.Module) -> Unit)
 
+    /**
+     * Direct tune. From com.syu.ms (radio module command 13 → setFreq(mode, value) of the MCU
+     * radio, module.k.a): mode 3 sends MCU packet 0x25 hi lo with the frequency in 10 kHz units
+     * (0…10800) – no conversion, works at once. Mode 1 converts via band limits the service only
+     * knows after the MCU has sent its band-range packet (often only when the stock radio app
+     * asked); until then it is silently dropped. That is why 1.0.0/1.0.1 fell back to stepping.
+     */
     private fun tuneVariants(band: Band, target: Int): List<Variant> {
-        val v10 = if (band == Band.FM) target / 10 else target      // 98.1 MHz → 9810
-        val v100 = if (band == Band.FM) target / 100 else target    // 98.1 MHz → 981
+        val v10 = if (band == Band.FM) target / 10 else target      // 98.1 MHz → 9810; AM in kHz
         return listOf(
-            Variant("cmd(13,[1,$v10])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10)) },
-            Variant("cmd(13,[$v10])") { it.cmd(Syu.C_FREQ, intArrayOf(v10)) },
-            Variant("cmd(13,[$v10,1])") { it.cmd(Syu.C_FREQ, intArrayOf(v10, Syu.FREQ_DIRECT)) },
+            Variant("cmd(13,[3,$v10]) direct MCU") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_MCU_DIRECT, v10)) },
+            Variant("cmd(13,[1,$v10]) via band limits") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10)) },
             Variant("cmd(13,[1,$target])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, target)) },
-            Variant("cmd(13,[1,$v100])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v100)) },
-            Variant("cmd(13,[1,$v10],flt)") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10), floatArrayOf(target / 1000f)) },
         )
     }
 
     private fun stepVariants(up: Boolean): List<Variant> {
         val c = if (up) Syu.C_FREQ_UP else Syu.C_FREQ_DOWN
         val dir = if (up) 1 else -1
+        // com.syu.ms ignores the value for 3/4 (step) – any form works; [0] matches the FYT launcher.
         return listOf(
             Variant("cmd($c,[0])") { it.cmd(c, intArrayOf(0)) },
-            Variant("cmd($c,[1])") { it.cmd(c, intArrayOf(1)) },
-            Variant("cmd(13,[0,$dir])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_BY_STEP, dir)) },
             Variant("cmd($c)") { it.cmd(c) },
+            Variant("cmd(13,[0,$dir])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_BY_STEP, dir)) },
         )
     }
 
@@ -242,7 +245,6 @@ class FytMcuBackend : RadioBackend {
         val c = if (up) Syu.C_SEEK_UP else Syu.C_SEEK_DOWN
         return listOf(
             Variant("cmd($c,[0])") { it.cmd(c, intArrayOf(0)) },
-            Variant("cmd($c,[1])") { it.cmd(c, intArrayOf(1)) },
             Variant("cmd($c)") { it.cmd(c) },
         )
     }
@@ -273,7 +275,7 @@ class FytMcuBackend : RadioBackend {
         val target = Freq.clamp(band, khz)
         if (currentBand() != null && currentBand() != band) setBand(host, band)
         if (abs(reportedKhz - target) < 5) return
-        if (runLearning(host, "tune", tuneVariants(band, target), 1300) { abs(reportedKhz - target) < 5 } != null) return
+        if (runLearning(host, "tune", tuneVariants(band, target), 2500) { abs(reportedKhz - target) < 5 } != null) return
         // No direct format works: walk there with steps (needs a working step format).
         if (reportedKhz <= 0) {
             throw RadioException("Tuner does not report its frequency", "The radio module accepted commands but never reported back. Open the stock radio once, then retry.")
@@ -283,8 +285,8 @@ class FytMcuBackend : RadioBackend {
         while (abs(reportedKhz - target) >= stepKhz && guard < 400) {
             val before = reportedKhz
             val up = target > reportedKhz
-            val ok = if (guard == 0) runLearning(host, "step", stepVariants(up), 900) { reportedKhz != before } != null
-                else { expect(); stepVariants(up)[host.prefs.fytVariant("step").coerceAtLeast(0)].send(radio!!); waitFor(900) { reportedKhz != before } }
+            val ok = if (guard == 0) runLearning(host, "step", stepVariants(up), 2000) { reportedKhz != before } != null
+                else { expect(); stepVariants(up)[host.prefs.fytVariant("step").coerceAtLeast(0)].send(radio!!); waitFor(2000) { reportedKhz != before } }
             if (!ok) throw RadioException("The tuner ignores tuning commands from Car Radio",
                 "It plays ${Freq.format(band, reportedKhz)}. Run Diagnostics → Learn tuner commands and send the report.")
             guard++
@@ -303,7 +305,7 @@ class FytMcuBackend : RadioBackend {
     override suspend fun step(host: BackendHost, up: Boolean) {
         ensure(host)
         val before = reportedKhz
-        if (runLearning(host, "step", stepVariants(up), 900) { reportedKhz != before } == null) super.step(host, up)
+        if (runLearning(host, "step", stepVariants(up), 2000) { reportedKhz != before } == null) super.step(host, up)
     }
 
     override suspend fun scan(host: BackendHost) {
@@ -323,7 +325,7 @@ class FytMcuBackend : RadioBackend {
         out += "Start: $start kHz, appId=$appId"
         for ((label, v) in stepVariants(true).map { it.label to it }) {
             val before = reportedKhz; expect(3000); v.send(radio!!)
-            out += "step up $label -> ${if (waitFor(1200) { reportedKhz != before }) "MOVED to $reportedKhz" else "no change"}"
+            out += "step up $label -> ${if (waitFor(2000) { reportedKhz != before }) "MOVED to $reportedKhz" else "no change"}"
         }
         for ((label, v) in seekVariants(true).map { it.label to it }) {
             val before = reportedKhz; expect(15_000); v.send(radio!!)
@@ -334,7 +336,7 @@ class FytMcuBackend : RadioBackend {
         for (v in tuneVariants(Band.FM, target)) {
             if (abs(reportedKhz - target) < 5) { expect(3000); runCatching { stepVariants(true)[0].send(radio!!) }; waitFor(1200) { reportedKhz != target } }
             val before = reportedKhz; expect(3000); v.send(radio!!)
-            out += "tune ${v.label} -> ${if (waitFor(1500) { abs(reportedKhz - target) < 5 }) "WORKS" else "no (at $reportedKhz, from $before)"}"
+            out += "tune ${v.label} -> ${if (waitFor(2500) { abs(reportedKhz - target) < 5 }) "WORKS" else "no (at $reportedKhz, from $before)"}"
         }
         out += "Next channel cmd(0,[0]) -> " + run { val b = reportedKhz; expect(3000); radio!!.cmd(Syu.C_NEXT_CHANNEL, intArrayOf(0)); if (waitFor(2000) { reportedKhz != b }) "MOVED to $reportedKhz" else "no change" }
         out.forEach { AppLog.i("Learn: $it") }
