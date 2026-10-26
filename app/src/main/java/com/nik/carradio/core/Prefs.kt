@@ -31,6 +31,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("auto_start", true)
         set(v) = sp.edit().putBoolean("auto_start", v).apply()
 
+    /** Steering-wheel next/prev move through the user's station group (FYT redirect). */
+    var wheelUsesStations: Boolean
+        get() = sp.getBoolean("wheel_stations", true)
+        set(v) = sp.edit().putBoolean("wheel_stations", v).apply()
+
     var streamUrl: String
         get() = sp.getString("stream_url", "") ?: ""
         set(v) = sp.edit().putString("stream_url", v.trim()).apply()

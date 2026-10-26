@@ -15,6 +15,13 @@ interface BackendHost {
     val state: RadioState
     /** Push a state change (frequency reported by hardware, RDS text, …). Thread-safe. */
     fun update(transform: (RadioState) -> RadioState)
+
+    /**
+     * The hardware changed station on its own: on FYT, the steering-wheel next/prev keys are
+     * handled inside the vendor service and jump to the MCU's preset list. The controller
+     * redirects that to the neighbour in the user's station group.
+     */
+    fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean)
 }
 
 /**

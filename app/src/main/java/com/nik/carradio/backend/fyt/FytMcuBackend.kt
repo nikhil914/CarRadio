@@ -29,6 +29,36 @@ class FytMcuBackend : RadioBackend {
     @Volatile private var reportedBand: Band? = null
     @Volatile private var appId = -1
     @Volatile private var host: BackendHost? = null
+    private var steer: Syu.Module? = null
+    /** Frequency changes before this time were caused by our own commands. */
+    @Volatile private var expectUntil = 0L
+    /** Last steering-wheel key seen on the FYT steer module: (next?, time). */
+    @Volatile private var lastSteer: Pair<Boolean, Long>? = null
+
+    /** A vendor-made jump not yet explained by a key: (from kHz, time). */
+    @Volatile private var unexplained: Pair<Int, Long>? = null
+
+    private fun expect(ms: Long = 2500) { expectUntil = System.currentTimeMillis() + ms }
+
+    private val steerCb = Syu.Callback { code, ints, _, _ ->
+        val dir = when {
+            ints?.any { it == Syu.STEER_NEXT } == true -> true
+            ints?.any { it == Syu.STEER_PREV } == true -> false
+            code == Syu.STEER_NEXT && ints?.firstOrNull() == 1 -> true
+            code == Syu.STEER_PREV && ints?.firstOrNull() == 1 -> false
+            else -> null
+        }
+        if (dir != null) {
+            lastSteer = dir to System.currentTimeMillis()
+            AppLog.i("FYT steer key: ${if (dir) "NEXT" else "PREVIOUS"} (update=$code ints=${ints?.contentToString()})")
+            // Key reported just after the jump it caused: redirect now.
+            val jump = unexplained?.takeIf { System.currentTimeMillis() - it.second < 1500 }
+            val h = host
+            if (jump != null && h != null) { unexplained = null; lastSteer = null; redirect(h, jump.first, dir) }
+        } else if (ints != null && ints.isNotEmpty()) {
+            AppLog.i("FYT steer update=$code ints=${ints.contentToString()}")
+        }
+    }
 
     private val radioCb = Syu.Callback { code, ints, _, strs -> onRadioUpdate(code, ints, strs) }
     private val mainCb = Syu.Callback { code, ints, _, _ ->
@@ -70,7 +100,10 @@ class FytMcuBackend : RadioBackend {
         main = toolkit.module(Syu.MODULE_MAIN)
         Syu.RADIO_UPDATES.forEach { code -> runCatching { radio!!.register(radioCb, code, 1) } }
         main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1) } }
-        AppLog.i("FYT: modules ready, callbacks registered")
+        steer = runCatching { toolkit.module(Syu.MODULE_STEER) }.getOrNull()
+        // update=0: only future key events, no replay of stale values.
+        steer?.let { st -> for (c in 0..255) runCatching { st.register(steerCb, c, 0) } }
+        AppLog.i("FYT: modules ready (radio, main=${main != null}, steer=${steer != null}), callbacks registered")
     }
 
     private fun onRadioUpdate(code: Int, ints: IntArray?, strs: Array<String?>?) {
@@ -80,9 +113,11 @@ class FytMcuBackend : RadioBackend {
             Syu.U_FREQ -> if (v != null) {
                 val khz = Freq.decodeInt(v)
                 if (khz == null) { AppLog.w("FYT: unknown frequency value $v"); return }
+                val prev = reportedKhz
                 reportedKhz = khz
+                if (prev > 0 && khz != prev && System.currentTimeMillis() > expectUntil) onVendorTune(h, prev, khz)
                 val band = Freq.bandOf(khz)
-                h.update { it.copy(freqKhz = khz, band = band, stationName = if (it.freqKhz != khz) "" else it.stationName, radioText = if (it.freqKhz != khz) "" else it.radioText) }
+                h.update { it.copy(freqKhz = khz, band = band, stationName = if (it.freqKhz != khz) "" else it.stationName, radioText = if (it.freqKhz != khz) "" else it.radioText, pty = if (it.freqKhz != khz) 0 else it.pty) }
                 h.prefs.setLastFreq(band, khz)
             }
             Syu.U_BAND -> if (v != null) {
@@ -93,11 +128,39 @@ class FytMcuBackend : RadioBackend {
             Syu.U_RDS_TEXT -> strs?.firstOrNull()?.trim()?.let { s -> h.update { it.copy(radioText = s) } }
             Syu.U_STEREO -> if (v != null) h.update { it.copy(stereo = v != 0) }
             Syu.U_SEARCH_STATE -> if (v != null) h.update { it.copy(scanning = v != 0) }
+            Syu.U_PTY_ID -> if (v != null) h.update { it.copy(pty = v and 0x1f) }
+            Syu.U_RDS_TA -> if (v != null) h.update { it.copy(ta = v != 0) }
+            Syu.U_RDS_TP -> if (v != null) h.update { it.copy(tp = v != 0) }
+            Syu.U_RDS_AF_ENABLE -> if (v != null) h.update { it.copy(af = v != 0) }
+            Syu.U_LOC -> if (v != null) h.update { it.copy(loc = v != 0) }
         }
+    }
+
+    /**
+     * The tuner moved without a command from us. With a fresh steering-wheel key it is the
+     * vendor's preset jump → hand it to the controller to go to the user's next station
+     * instead. Without key evidence (someone used the stock radio) it is left alone.
+     */
+    private fun onVendorTune(h: BackendHost, fromKhz: Int, toKhz: Int) {
+        val key = lastSteer?.takeIf { System.currentTimeMillis() - it.second < 2500 }
+        if (key == null) {
+            unexplained = fromKhz to System.currentTimeMillis()
+            AppLog.i("FYT: tuner moved $fromKhz -> $toKhz kHz by itself (no wheel key yet) – following it unless a key arrives")
+            return
+        }
+        lastSteer = null
+        AppLog.i("FYT: wheel ${if (key.first) "NEXT" else "PREVIOUS"} made the MCU jump $fromKhz -> $toKhz")
+        redirect(h, fromKhz, key.first)
+    }
+
+    private fun redirect(h: BackendHost, fromKhz: Int, up: Boolean) {
+        AppLog.i("FYT: redirecting wheel ${if (up) "next" else "previous"} from $fromKhz kHz to the station list")
+        h.onExternalStep(Freq.bandOf(fromKhz), fromKhz, up)
     }
 
     override suspend fun powerOn(host: BackendHost, band: Band, khz: Int) {
         ensure(host)
+        expect()
         AppLog.step("FYT: switching MCU audio source to RADIO (main cmd 0, [1])")
         main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
             ?: AppLog.w("FYT: main module missing – cannot switch audio source; sound may stay on the previous source")
@@ -116,9 +179,11 @@ class FytMcuBackend : RadioBackend {
     override suspend fun setBand(host: BackendHost, band: Band) {
         ensure(host)
         if (currentBand() == band) return
+        expect(4000)
         radio!!.cmd(Syu.C_BAND, intArrayOf(if (band == Band.FM) Syu.BAND_SWITCH_FM else Syu.BAND_SWITCH_AM))
         if (waitFor(1500) { currentBand() == band }) return
         AppLog.w("FYT: band command with explicit band not confirmed, trying toggle (-1)")
+        expect(4000)
         radio!!.cmd(Syu.C_BAND, intArrayOf(-1))
         if (!waitFor(1500) { currentBand() == band }) {
             throw RadioException("Tuner did not switch to ${band.name}", "Some FYT units have no ${band.name} band in this region setting (Settings → Radio region).")
@@ -136,6 +201,7 @@ class FytMcuBackend : RadioBackend {
         val learned = host.prefs.fytTuneMode
         val modes = (listOf(learned) + listOf(0, 1)).filter { it >= 0 }.distinct()
         for (mode in modes) {
+            expect()
             when (mode) {
                 0 -> radio!!.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, value))
                 1 -> radio!!.cmd(Syu.C_FREQ, intArrayOf(value))
@@ -154,6 +220,7 @@ class FytMcuBackend : RadioBackend {
         var guard = 0
         while (abs(reportedKhz - target) >= stepKhz && guard < 400) {
             val before = reportedKhz
+            expect()
             radio!!.cmd(if (target > reportedKhz) Syu.C_FREQ_UP else Syu.C_FREQ_DOWN)
             if (!waitFor(600) { reportedKhz != before }) {
                 throw RadioException("Tuner stopped responding while stepping to ${Freq.format(band, target)}", "Current ${Freq.format(band, reportedKhz)}. Try seek, or reconnect via Diagnostics.")
@@ -164,25 +231,27 @@ class FytMcuBackend : RadioBackend {
     }
 
     override suspend fun seek(host: BackendHost, up: Boolean) {
-        ensure(host); radio!!.cmd(if (up) Syu.C_SEEK_UP else Syu.C_SEEK_DOWN)
+        ensure(host); expect(12_000); radio!!.cmd(if (up) Syu.C_SEEK_UP else Syu.C_SEEK_DOWN)
     }
 
     override suspend fun step(host: BackendHost, up: Boolean) {
         ensure(host)
         val before = reportedKhz
+        expect()
         radio!!.cmd(if (up) Syu.C_FREQ_UP else Syu.C_FREQ_DOWN)
         if (!waitFor(800) { reportedKhz != before }) super.step(host, up)
     }
 
     override suspend fun scan(host: BackendHost) {
-        ensure(host); radio!!.cmd(Syu.C_SEARCH, intArrayOf(Syu.SEARCH_STATE_AUTO))
+        ensure(host); expect(120_000); radio!!.cmd(Syu.C_SEARCH, intArrayOf(Syu.SEARCH_STATE_AUTO))
         host.update { it.copy(scanning = true) }
     }
 
     override fun release(host: BackendHost) {
         radio?.let { r -> Syu.RADIO_UPDATES.forEach { runCatching { r.unregister(radioCb, it) } } }
         main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID) } }
-        radio = null; main = null; this.host = null
+        steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
+        radio = null; main = null; steer = null; this.host = null
     }
 
     private suspend fun waitFor(ms: Long, cond: () -> Boolean): Boolean {

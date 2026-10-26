@@ -49,12 +49,31 @@ data class RadioState(
     val stationName: String = "",
     val radioText: String = "",
     val stereo: Boolean? = null,
+    /** RDS programme type code (0 = none). */
+    val pty: Int = 0,
+    /** RDS flags as reported by the tuner; null = this tuner does not report it. */
+    val ta: Boolean? = null,
+    val tp: Boolean? = null,
+    val af: Boolean? = null,
+    val loc: Boolean? = null,
     val signal: Int? = null,
     val scanning: Boolean = false,
     val muted: Boolean = false,
     val status: String = "Starting…",
     val error: UiError? = null,
 )
+
+/** RDS (Europe/Middle East, IEC 62106) programme type names. */
+object Pty {
+    private val NAMES = listOf(
+        "", "News", "Current affairs", "Information", "Sport", "Education", "Drama", "Culture",
+        "Science", "Varied", "Pop music", "Rock music", "Easy listening", "Light classical",
+        "Serious classical", "Other music", "Weather", "Finance", "Children", "Social affairs",
+        "Religion", "Phone-in", "Travel", "Leisure", "Jazz", "Country", "National music",
+        "Oldies", "Folk music", "Documentary", "Alarm test", "Alarm",
+    )
+    fun name(code: Int): String = NAMES.getOrElse(code) { "" }
+}
 
 object Freq {
     const val FM_MIN = 87_500

@@ -24,6 +24,10 @@ object Syu {
     const val MODULE_MAIN = 0
     const val MODULE_RADIO = 1
     const val MODULE_SOUND = 4
+    /** Steering-wheel key module; 87 = next, 88 = previous (seen on FYT/Dudu firmware). */
+    const val MODULE_STEER = 10
+    const val STEER_NEXT = 87
+    const val STEER_PREV = 88
 
     // Main module
     const val MAIN_C_APP_ID = 0
@@ -58,12 +62,17 @@ object Syu {
     const val U_BAND = 0
     const val U_FREQ = 1
     const val U_CHANNEL = 3
+    const val U_PTY_ID = 5
+    const val U_RDS_AF_ENABLE = 6
+    const val U_RDS_TA = 7
+    const val U_RDS_TP = 8
+    const val U_LOC = 23
     const val U_RDS_TEXT = 13
     const val U_RDS_CHANNEL_TEXT = 14
     const val U_STEREO = 21
     const val U_SEARCH_STATE = 22
     const val U_PS_TEXT = 26
-    val RADIO_UPDATES = intArrayOf(U_BAND, U_FREQ, U_CHANNEL, U_RDS_TEXT, U_RDS_CHANNEL_TEXT, U_STEREO, U_SEARCH_STATE, U_PS_TEXT)
+    val RADIO_UPDATES = intArrayOf(U_BAND, U_FREQ, U_CHANNEL, U_PTY_ID, U_RDS_AF_ENABLE, U_RDS_TA, U_RDS_TP, U_RDS_TEXT, U_RDS_CHANNEL_TEXT, U_STEREO, U_SEARCH_STATE, U_LOC, U_PS_TEXT)
 
     /** FYT encodes FM bands as 65536+n and AM as 0+n. */
     fun isFmBand(v: Int) = v >= 65536

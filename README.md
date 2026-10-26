@@ -28,6 +28,16 @@ Built first for an **FYT UIS8141E (SC7731E)** unit (reports "Android 13", really
 - **Persistent log**: every step is written to a file. The Log tab and "Share report" show the full trail, including the step that was running if the app was killed.
 - **Diagnostics tab**: per-method status (WORKS / MAYBE / BLOCKED / NO / CRASHED), with technical details, "Use this", "Test start", device properties, vendor packages, `libfmjni` and `/dev` nodes.
 
+## Stations and wheel keys (0.3.0)
+
+- **Station groups (playlists):** Hindi, English, Arabic, Malayalam, plus your own (`+ Group`; long-press a group of your own to delete it). Also All, Favourites and Unsorted. One station can sit in several groups.
+- **Seeded UAE list:** 13 stations with Abu Dhabi frequencies where known, shown as "unconfirmed" until a scan hears them.
+- **SCAN:** seeks up through the band and stays 2.5 s on each station to read its RDS name. Known stations become confirmed; new ones are filed into a group by RDS name or frequency, otherwise they go to Unsorted.
+- **Station grid:** tap to play, long-press to edit the name, frequency, groups and favourite, move, or delete. `+ SAVE` stores the current station in the selected group. The sort button cycles through manual order, frequency and A–Z.
+- **Steering-wheel next/prev:** on FYT, `com.syu.ms` handles the wheel key itself and jumps to its own preset (seen on Dudu7 captures). Car Radio watches the FYT steer module (keys 87/88), sees the jump it didn't ask for, and redirects it to the next or previous station in your current group. A MediaSession also handles standard media keys and gives launchers (Agama, FCC, CarLauncher) the station name and radio text. The redirect can be switched off in Settings.
+- **RDS:** programme type (News, Pop music…) plus TP, TA, AF and LOC/DX indicators when the tuner reports them.
+- Stations live in `stations.json`, which is written atomically. Settings has a button that copies it as a JSON backup.
+
 ## Sending the diagnostics report (no USB needed)
 
 Diagnostics → **Send report** offers:
