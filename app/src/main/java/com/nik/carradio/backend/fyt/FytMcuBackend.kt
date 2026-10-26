@@ -61,7 +61,14 @@ class FytMcuBackend : RadioBackend {
     }
 
     private val radioCb = Syu.Callback { code, ints, _, strs -> onRadioUpdate(code, ints, strs) }
+    @Volatile private var acc = -1
+
     private val mainCb = Syu.Callback { code, ints, _, _ ->
+        if (code == Syu.MAIN_U_ACC_ON && ints != null && ints.isNotEmpty()) {
+            val on = ints[0]
+            if (acc != -1 && acc != on) { AppLog.i("FYT: ACC ${if (on == 1) "ON" else "OFF"}"); host?.onAccChanged(on == 1) }
+            acc = on
+        }
         if (code == Syu.MAIN_U_APP_ID && ints != null && ints.isNotEmpty()) {
             if (appId != ints[0]) AppLog.i("FYT: MCU audio source is now appId=${ints[0]} (1 = radio)")
             appId = ints[0]
@@ -99,7 +106,7 @@ class FytMcuBackend : RadioBackend {
             ?: throw RadioException("FYT service has no radio module", "This firmware exposes no MCU tuner. Try the FmNative method in Diagnostics.")
         main = toolkit.module(Syu.MODULE_MAIN)
         Syu.RADIO_UPDATES.forEach { code -> runCatching { radio!!.register(radioCb, code, 1) } }
-        main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1) } }
+        main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1); mm.register(mainCb, Syu.MAIN_U_ACC_ON, 1) } }
         steer = runCatching { toolkit.module(Syu.MODULE_STEER) }.getOrNull()
         // update=0: only future key events, no replay of stale values.
         steer?.let { st -> for (c in 0..255) runCatching { st.register(steerCb, c, 0) } }
@@ -249,7 +256,7 @@ class FytMcuBackend : RadioBackend {
 
     override fun release(host: BackendHost) {
         radio?.let { r -> Syu.RADIO_UPDATES.forEach { runCatching { r.unregister(radioCb, it) } } }
-        main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID) } }
+        main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON) } }
         steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
         radio = null; main = null; steer = null; this.host = null
     }

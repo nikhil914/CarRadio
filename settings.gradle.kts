@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "CarRadio"
 include(":app")
+include(":radioproxy")

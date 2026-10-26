@@ -29,11 +29,13 @@ class StockAppBackend : RadioBackend {
         val pm = host.context.packageManager
         for ((pkg, cls) in known) {
             if (!DeviceInfo.isInstalled(host.context, pkg)) continue
+            // Our own Radio-key proxy sits under com.syu.radio: launching it would loop back here.
+            if (DeviceInfo.signing(host.context, pkg)?.isProxy == true) continue
             val i = if (cls != null) Intent(Intent.ACTION_MAIN).setComponent(ComponentName(pkg, cls)) else pm.getLaunchIntentForPackage(pkg)
             if (i != null && pm.resolveActivity(i, 0) != null) return i to pkg
             pm.getLaunchIntentForPackage(pkg)?.let { return it to pkg }
         }
-        DeviceInfo.radioLikeApps(host.context).firstOrNull()?.let { (pkg, _) -> pm.getLaunchIntentForPackage(pkg)?.let { return it to pkg } }
+        DeviceInfo.radioLikeApps(host.context).firstOrNull { DeviceInfo.signing(host.context, it.first)?.isProxy != true }?.let { (pkg, _) -> pm.getLaunchIntentForPackage(pkg)?.let { return it to pkg } }
         return null
     }
 

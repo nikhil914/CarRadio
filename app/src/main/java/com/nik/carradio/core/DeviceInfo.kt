@@ -79,8 +79,46 @@ object DeviceInfo {
         out += "Radio-like apps: " + radioLikeApps(ctx).joinToString { "${it.second} (${it.first})" }.ifEmpty { "none" }
         out += "libfmjni: " + existingLibs().ifEmpty { listOf("not found") }.joinToString()
         out += "Device nodes: " + devNodes().ifEmpty { listOf("none visible") }.joinToString()
+        listOf("com.syu.radio", "com.syu.ms", "android").forEach { p ->
+            signing(ctx, p)?.let { s -> out += "Signer $p: ${s.aospKey ?: "vendor key"} sha256=${s.sha256.take(16)}… sharedUser=${s.sharedUser} vc=${s.versionCode} system=${s.system}" }
+        }
+        out += proxyVerdict(ctx)
         out += "Classes: TWUtil=${classExists("android.tw.john.TWUtil")}, MTC CarManager=${classExists("android.microntek.CarManager")}, RadioManager=${classExists("android.hardware.radio.RadioManager")}"
         return out
+    }
+
+    /** SHA-256 of the public AOSP keys the Radio-key proxy is built with. */
+    val AOSP_KEYS = mapOf(
+        "a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc" to "aospTestkey",
+        "c8a2e9bccf597c2fb6dc66bee293fc13f2fc47ec77bc6b2b0d52c11f51192ab8" to "aospPlatform",
+    )
+
+    data class PkgSign(val pkg: String, val sha256: String, val sharedUser: String?, val versionCode: Long, val system: Boolean, val isProxy: Boolean) {
+        val aospKey get() = AOSP_KEYS[sha256]
+    }
+
+    @Suppress("DEPRECATION")
+    fun signing(ctx: Context, pkg: String): PkgSign? = runCatching {
+        val pi = ctx.packageManager.getPackageInfo(pkg, PackageManager.GET_SIGNATURES or PackageManager.GET_META_DATA)
+        val cert = pi.signatures?.firstOrNull()?.toByteArray() ?: return null
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(cert).joinToString("") { "%02x".format(it) }
+        val vc = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
+        val sys = (pi.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0
+        val proxy = pi.applicationInfo?.metaData?.getBoolean("com.nik.carradio.PROXY", false) == true
+        PkgSign(pkg, sha, pi.sharedUserId, vc, sys, proxy)
+    }.getOrNull()
+
+    /** Plain-language verdict on whether the Radio-key proxy can replace com.syu.radio. */
+    fun proxyVerdict(ctx: Context): String {
+        val s = signing(ctx, "com.syu.radio") ?: return "com.syu.radio not installed – the Radio-key proxy is not needed/possible"
+        if (s.isProxy) return "Radio-key proxy is INSTALLED (Radio icon opens Car Radio). Remove: Settings → Apps → Radio → Uninstall updates"
+        val key = s.aospKey
+        val shared = s.sharedUser?.let { ", sharedUserId=$it" } ?: ""
+        return when {
+            key == null -> "Radio-key proxy will NOT install: com.syu.radio is signed with a private vendor key (sha256 ${s.sha256.take(16)}…$shared)"
+            s.sharedUser != null -> "Radio-key proxy: signed with $key but uses sharedUserId ${s.sharedUser} – needs a proxy variant with that sharedUserId (send this report)"
+            else -> "Radio-key proxy should install: use CarRadio-proxy-$key.apk (firmware app versionCode ${s.versionCode})"
+        }
     }
 
     fun realAndroid(): String = when (Build.VERSION.SDK_INT) {

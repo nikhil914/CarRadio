@@ -195,7 +195,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             BigButton("◀◀\nSEEK", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.seek(false) }
             BigButton("◀\nSTEP", Modifier.weight(1f), enabled = tuneable) { RadioController.step(false) }
-            BigButton(if (s.powered) "⏻\nOFF" else "⏻\nON", Modifier.weight(1.2f), primary = true, enabled = s.backendId != null) { RadioController.powerToggle() }
+            BigButton(if (s.powered) "RADIO\nOFF" else "RADIO\nON", Modifier.weight(1.2f), primary = true, enabled = s.backendId != null) { RadioController.powerToggle() }
             BigButton("▶\nSTEP", Modifier.weight(1f), enabled = tuneable) { RadioController.step(true) }
             BigButton("▶▶\nSEEK", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.seek(true) }
         }
@@ -366,6 +366,7 @@ fun SettingsScreen() {
     var amStep by remember { mutableIntStateOf(prefs.amStepKhz) }
     var auto by remember { mutableStateOf(prefs.autoStart) }
     var wheel by remember { mutableStateOf(prefs.wheelUsesStations) }
+    var resume by remember { mutableStateOf(prefs.resumeOnStart) }
     val ctx = LocalContext.current
     var url by remember { mutableStateOf(prefs.streamUrl) }
     var repo by remember { mutableStateOf(prefs.githubRepo) }
@@ -385,7 +386,12 @@ fun SettingsScreen() {
             Text("Steering-wheel next/prev go through my station group", modifier = Modifier.weight(1f))
             Switch(checked = wheel, onCheckedChange = { wheel = it; prefs.wheelUsesStations = it })
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Resume the radio when the unit starts or wakes, if it was playing", modifier = Modifier.weight(1f))
+            Switch(checked = resume, onCheckedChange = { resume = it; prefs.resumeOnStart = it })
+        }
         OutlinedButton(onClick = { copyText(ctx, com.nik.carradio.core.StationStore.exportJson()) }) { Text("Copy station list (JSON backup)") }
+        RadioKeySection()
         Text("Internet radio stream URL (fallback method)", fontWeight = FontWeight.Bold)
         OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("http(s)://…") })
         Button(onClick = { prefs.streamUrl = url; AppLog.i("Stream URL saved"); RadioController.probeAll() }) { Text("Save URL") }
@@ -399,6 +405,18 @@ fun SettingsScreen() {
         OutlinedButton(enabled = crashed.value.isNotEmpty(), onClick = { RadioController.reenableCrashed(); crashed.value = emptySet() }) { Text("Re-enable crashed methods") }
         Text("Version ${BuildConfig.VERSION_NAME} · Android ${DeviceInfo.realAndroid()} (reported: ${android.os.Build.VERSION.RELEASE})", color = Grey, fontSize = 12.sp)
     }
+}
+
+/** Whether the Radio-key proxy can replace com.syu.radio on this firmware, and how. */
+@Composable
+private fun RadioKeySection() {
+    val ctx = LocalContext.current
+    val verdict by produceState("Checking…") { value = withContext(Dispatchers.IO) { DeviceInfo.proxyVerdict(ctx) } }
+    Text("Radio key and Radio icon", fontWeight = FontWeight.Bold)
+    Text(verdict, fontSize = 14.sp)
+    Text("The proxy is a tiny separate app (CarRadio-proxy-*.apk on the GitHub release page) that installs as an update to the unit's own radio app, " +
+        "so the Radio icon and the hardware Radio key open Car Radio. Android only accepts it if the key matches – the line above says which file to use. " +
+        "To undo: Settings → Apps → Radio → Uninstall updates.", color = Grey, fontSize = 13.sp)
 }
 
 // ============================================================================ small widgets

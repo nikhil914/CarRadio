@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Car Radio</string>
+    <string name="widget_wide_name">Car Radio (wide)</string>
+    <string name="widget_compact_name">Car Radio (square)</string>
+    <string name="widget_wide_desc">Station, frequency and previous / on-off / next</string>
+    <string name="widget_compact_desc">Logo, station and controls</string>
 </resources>

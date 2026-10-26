@@ -22,6 +22,9 @@ interface BackendHost {
      * redirects that to the neighbour in the user's station group.
      */
     fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean)
+
+    /** Ignition (ACC) changed, as reported by the vendor MCU. */
+    fun onAccChanged(on: Boolean)
 }
 
 /**

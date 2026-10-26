@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <queries>
+        <package android:name="com.nik.carradio" />
+    </queries>
+    <application
+        android:label="Radio"
+        android:icon="@android:drawable/ic_media_play"
+        android:allowBackup="false"
+        tools:ignore="MissingApplicationIcon">
+        <!-- Lets Car Radio recognise this package as its own proxy (and not launch it in a loop). -->
+        <meta-data android:name="com.nik.carradio.PROXY" android:value="true" />
+
+        <!-- Same class names as the FYT radio app, so the launcher, Radio key and widgets hit it. -->
+        <activity
+            android:name=".Launch"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.syu.radio" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name=".RadioActivity"
+            android:exported="true"
+            android:targetActivity=".Launch" />
+    </application>
+</manifest>
