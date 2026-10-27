@@ -17,3 +17,7 @@ jobs:
         with:
           name: CarRadio-apk
           path: app/build/outputs/apk/release/app-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SendToCar-apk
+          path: sendtocar/build/outputs/apk/release/sendtocar-release.apk
