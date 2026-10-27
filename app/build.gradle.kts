@@ -13,8 +13,8 @@ android {
         // Head units in the field run Android 6 – 13; 21 keeps even very old units installable.
         minSdk = 21
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.2.0"
+        versionCode = 11
+        versionName = "1.3.0"
     }
 
     signingConfigs {
@@ -53,6 +53,18 @@ android {
         compose = true
         buildConfig = true
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                it.systemProperty("screenshots", project.findProperty("screenshots") ?: "")
+                // Robolectric renders are slow and download a 100 MB Android jar: only on request.
+                if (project.findProperty("screenshots") == null) it.exclude("**/ScreenshotTest*")
+                it.systemProperty("roborazzi.test.record", "true")
+                it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+            }
+        }
+    }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
@@ -79,4 +91,10 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM unit tests (android.jar only has stubs).
     testImplementation("org.json:json:20240303")
+    // Screenshot renders of the UI on the JVM (opt-in: -Pscreenshots, see ScreenshotTest).
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.39.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.39.0")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

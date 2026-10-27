@@ -86,12 +86,11 @@ fun StationPanel(band: Band, freqKhz: Int, powered: Boolean) {
     }
     Spacer(Modifier.height(6.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        SmallButton("◀ STN", Modifier.weight(1f)) { RadioController.stationStep(false) }
         SmallButton("+ SAVE", Modifier.weight(1f), enabled = powered) { RadioController.saveCurrentStation(data.selectedGroup) }
         SmallButton(when (data.sort) { SortMode.POSITION -> "ORDER"; SortMode.FREQUENCY -> "FREQ"; SortMode.NAME -> "A–Z" }, Modifier.weight(1f)) {
             StationStore.update { it.copy(sort = SortMode.entries[(it.sort.ordinal + 1) % SortMode.entries.size]) }
         }
-        SmallButton("STN ▶", Modifier.weight(1f)) { RadioController.stationStep(true) }
+        SmallButton("SCAN", Modifier.weight(1f), enabled = RadioController.activeBackend?.caps?.contains(com.nik.carradio.core.Cap.SEEK) == true) { RadioController.scanStations() }
     }
     scan?.let { p ->
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
@@ -202,7 +201,7 @@ private fun StationTexts(st: Station, size: Int, center: Boolean = false) {
 }
 
 @Composable
-private fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> Unit) {
+internal fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> Unit) {
     var name by remember { mutableStateOf(st.name) }
     var freqText by remember { mutableStateOf(Freq.format(st.band, st.freqKhz)) }
     var fav by remember { mutableStateOf(st.favourite) }

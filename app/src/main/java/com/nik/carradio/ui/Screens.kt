@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -90,6 +91,7 @@ internal val Grey = Color(0xFF90A4AE)
 @Composable
 fun AppRoot() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var page by rememberSaveable { mutableStateOf(SettingsPage.MAIN) }
     var fullscreen by rememberSaveable { mutableStateOf(false) }
     // Plain holder, not state: touches must not trigger recomposition.
     val lastTouch = remember { longArrayOf(System.currentTimeMillis()) }
@@ -110,113 +112,65 @@ fun AppRoot() {
         awaitPointerEventScope { while (true) { awaitPointerEvent(PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis() } }
     }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
-            TabRow(selectedTabIndex = tab) {
-                listOf("Radio", "Diagnostics", "Log", "Settings").forEachIndexed { i, t ->
-                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, fontSize = 18.sp) })
-                }
-            }
+            TabBar(tab) { tab = it; if (it == 2) page = SettingsPage.MAIN }
             when (tab) {
-                0 -> RadioScreen(onOpenDiagnostics = { tab = 1 }, onFullscreen = { fullscreen = true })
-                1 -> DiagnosticsScreen()
-                2 -> LogScreen()
-                else -> SettingsScreen()
+                0 -> RadioScreen(onOpenDiagnostics = { tab = 2; page = SettingsPage.DIAGNOSTICS }, onFullscreen = { fullscreen = true })
+                1 -> StationsScreen()
+                else -> when (page) {
+                    SettingsPage.MAIN -> SettingsScreen(onOpen = { page = it })
+                    SettingsPage.DIAGNOSTICS -> SubPage("Diagnostics", { page = SettingsPage.MAIN }) { DiagnosticsScreen() }
+                    SettingsPage.LOG -> SubPage("Log", { page = SettingsPage.MAIN }) { LogScreen() }
+                }
             }
         }
     }
 }
 
-// ============================================================================ Radio
+enum class SettingsPage { MAIN, DIAGNOSTICS, LOG }
 
+/** Three tabs, 56 dp tall, text only; the selected one carries the accent underline. */
 @Composable
-fun RadioScreen(onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit) {
+private fun TabBar(selected: Int, onSelect: (Int) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().height(56.dp).background(c.background).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        listOf("Radio", "Stations", "Settings").forEachIndexed { i, t ->
+            Column(Modifier.weight(1f).fillMaxHeight().combinedClickableCompat(onClick = { onSelect(i) }),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Text(t, fontSize = 19.sp, fontWeight = if (selected == i) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (selected == i) c.onSurface else Grey)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.width(36.dp).height(3.dp).background(if (selected == i) c.primary else Color.Transparent, RoundedCornerShape(2.dp)))
+            }
+        }
+    }
+}
+
+/** Stations tab: mini player on top, then groups, actions and the full list/grid/carousel. */
+@Composable
+fun StationsScreen() {
     val s by RadioController.stateFlow.collectAsState()
-    val probing by RadioController.probing.collectAsState()
-    var showEntry by remember { mutableStateOf(false) }
-
-    BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp)) {
-        val wide = maxWidth > 700.dp
-        if (wide) {
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column(Modifier.weight(1.4f).fillMaxSize().verticalScroll(rememberScrollState())) {
-                    MainPanel(s, probing, onOpenDiagnostics, onFullscreen) { showEntry = true }
-                }
-                Column(Modifier.weight(1f).fillMaxSize()) { StationPanel(s.band, s.freqKhz, s.powered) }
-            }
-        } else {
-            Column(Modifier.fillMaxSize()) {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    MainPanel(s, probing, onOpenDiagnostics, onFullscreen) { showEntry = true }
-                }
-                Spacer(Modifier.height(12.dp))
-                Column(Modifier.weight(1f)) { StationPanel(s.band, s.freqKhz, s.powered) }
-            }
-        }
-    }
-    if (showEntry) FrequencyDialog(s.band) { khz -> showEntry = false; if (khz != null) RadioController.tune(khz) }
-}
-
-@Composable
-private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit, onEnter: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Method: ", color = Grey)
-        Text(s.backendName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (s.busy || probing) {
-            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.width(8.dp))
-            Text(if (probing) "Checking radio methods…" else s.busyText, color = Grey, fontSize = 13.sp)
-        }
-    }
-    Text(s.status, color = Grey, fontSize = 13.sp, maxLines = 2)
-    UpdateBanner()
-    s.error?.let { ErrorCard(it, onOpenDiagnostics) }
-
-    Spacer(Modifier.height(8.dp))
-    Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
-        Text(Freq.format(s.band, s.freqKhz), fontSize = 96.sp, fontWeight = FontWeight.Bold,
-            color = if (s.powered) MaterialTheme.colorScheme.primary else Grey,
-            modifier = Modifier.combinedClickableCompat(onClick = onEnter, onDoubleClick = onFullscreen))
-        Spacer(Modifier.width(8.dp))
-        Column(Modifier.padding(bottom = 18.dp)) {
-            Text(Freq.unit(s.band), fontSize = 22.sp)
-            Text(s.band.name + (s.signal?.let { " · sig $it" } ?: ""), color = Grey)
-        }
-    }
-    if (s.stationName.isNotBlank()) Text(s.stationName, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
-    if (s.radioText.isNotBlank()) Text(s.radioText, color = Grey, maxLines = 2)
-    RdsFlags(s)
-    if (s.scanning) Text("Scanning…", color = Amber)
-    Spacer(Modifier.height(12.dp))
-
-    val tuneable = s.caps.contains(Cap.TUNE)
-    if (s.caps.contains(Cap.EXTERNAL_UI)) {
-        BigButton("OPEN RADIO", Modifier.fillMaxWidth()) { RadioController.powerOn() }
-        Text("This method hands over to the unit's own radio app.", color = Grey, fontSize = 13.sp)
-    } else if (s.caps.contains(Cap.STREAM)) {
-        BigButton(if (s.powered) "STOP STREAM" else "PLAY STREAM", Modifier.fillMaxWidth()) { RadioController.powerToggle() }
-    } else {
-        var showTuner by remember { mutableStateOf(false) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            BigButton("◀◀\nSEEK", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.seek(false) }
-            BigButton("◀\nSTEP", Modifier.weight(1f), enabled = tuneable) { RadioController.step(false) }
-            BigButton(if (s.powered) "RADIO\nOFF" else "RADIO\nON", Modifier.weight(1.2f), primary = true, enabled = s.backendId != null) { RadioController.powerToggle() }
-            BigButton("▶\nSTEP", Modifier.weight(1f), enabled = tuneable) { RadioController.step(true) }
-            BigButton("▶▶\nSEEK", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.seek(true) }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            SmallButton("FM", Modifier.weight(1f), selected = s.band == Band.FM, enabled = tuneable) { RadioController.setBand(Band.FM) }
-            SmallButton("AM", Modifier.weight(1f), selected = s.band == Band.AM, enabled = s.caps.contains(Cap.BAND_AM)) { RadioController.setBand(Band.AM) }
-            SmallButton("SCAN", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.scanStations() }
-            SmallButton("ENTER", Modifier.weight(1f), enabled = tuneable) { onEnter() }
-            if (s.caps.contains(Cap.MUTE)) SmallButton(if (s.muted) "UNMUTE" else "MUTE", Modifier.weight(1f)) { RadioController.setMute(!s.muted) }
-            else SmallButton("TUNER", Modifier.weight(1f), enabled = RadioController.activeBackend?.tunerOptions?.isNotEmpty() == true) { showTuner = true }
-        }
-        if (showTuner) TunerDialog { showTuner = false }
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        MiniPlayer()
+        Spacer(Modifier.height(10.dp))
+        StationPanel(s.band, s.freqKhz, s.powered)
     }
 }
 
 @Composable
-private fun ErrorCard(e: UiError, onOpenDiagnostics: () -> Unit) {
+private fun SubPage(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+            TextButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("‹ Settings", fontSize = 17.sp) }
+            Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        }
+        content()
+    }
+}
+
+// ============================================================================ Radio (see RadioUi.kt)
+
+@Composable
+internal fun ErrorCard(e: UiError, onOpenDiagnostics: () -> Unit) {
     var expanded by remember(e) { mutableStateOf(false) }
     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF3B1F22)), modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -234,7 +188,7 @@ private fun ErrorCard(e: UiError, onOpenDiagnostics: () -> Unit) {
 }
 
 @Composable
-private fun RdsFlags(s: RadioState) {
+internal fun RdsFlags(s: RadioState) {
     val items = buildList {
         s.stereo?.let { add(if (it) "ST" to true else "MONO" to false) }
         Pty.name(s.pty).takeIf { it.isNotBlank() }?.let { add(it to true) }
@@ -257,7 +211,7 @@ private fun RdsFlags(s: RadioState) {
 }
 
 @Composable
-private fun FrequencyDialog(band: Band, onDone: (Int?) -> Unit) {
+internal fun FrequencyDialog(band: Band, onDone: (Int?) -> Unit) {
     var text by remember { mutableStateOf("") }
     val parsed = Freq.parseUser(text)
     AlertDialog(
@@ -374,7 +328,7 @@ fun LogScreen() {
 // ============================================================================ Settings
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpen: (SettingsPage) -> Unit = {}) {
     val prefs = RadioController.prefs
     var fmStep by remember { mutableIntStateOf(prefs.fmStepKhz) }
     var amStep by remember { mutableIntStateOf(prefs.amStepKhz) }
@@ -423,6 +377,10 @@ fun SettingsScreen() {
         Button(onClick = { prefs.githubRepo = repo; prefs.githubToken = token; AppLog.i("GitHub upload settings saved (token ${if (token.isBlank()) "cleared" else "set"})") }) { Text("Save GitHub settings") }
 
         SectionHeader("Advanced")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onOpen(SettingsPage.DIAGNOSTICS) }, modifier = Modifier.height(56.dp)) { Text("Diagnostics and reports", fontSize = 16.sp) }
+            OutlinedButton(onClick = { onOpen(SettingsPage.LOG) }, modifier = Modifier.height(56.dp)) { Text("Log", fontSize = 16.sp) }
+        }
         Text("Methods disabled after a crash: " + crashed.value.ifEmpty { setOf("none") }.joinToString(), color = Grey)
         OutlinedButton(enabled = crashed.value.isNotEmpty(), onClick = { RadioController.reenableCrashed(); crashed.value = emptySet() }) { Text("Re-enable crashed methods") }
         Text("Version ${BuildConfig.VERSION_NAME} · Android ${DeviceInfo.realAndroid()} (reported: ${android.os.Build.VERSION.RELEASE})", color = Grey, fontSize = 12.sp)
