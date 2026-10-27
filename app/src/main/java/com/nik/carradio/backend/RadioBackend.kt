@@ -7,6 +7,7 @@ import com.nik.carradio.core.Prefs
 import com.nik.carradio.core.ProbeResult
 import com.nik.carradio.core.RadioException
 import com.nik.carradio.core.RadioState
+import com.nik.carradio.core.TunerOpt
 
 /** What a backend may use from the controller. */
 interface BackendHost {
@@ -55,6 +56,19 @@ interface RadioBackend {
     suspend fun setBand(host: BackendHost, band: Band) = tune(host, band, host.prefs.lastFreq(band))
     suspend fun scan(host: BackendHost): Unit = notSupported("Auto scan")
     suspend fun setMute(host: BackendHost, mute: Boolean): Unit = notSupported("Mute")
+
+    // ---- tuner settings (1.2). Defaults: not supported, the UI hides them.
+
+    /** On/off settings this backend can change. */
+    val tunerOptions: Set<TunerOpt> get() = emptySet()
+    suspend fun setOption(host: BackendHost, opt: TunerOpt, on: Boolean): Unit = notSupported(opt.label)
+
+    /** Region names in the tuner's own order; empty = no region setting. */
+    val regions: List<String> get() = emptyList()
+    suspend fun setRegion(host: BackendHost, index: Int): Unit = notSupported("Region")
+
+    val hasSensitivity: Boolean get() = false
+    suspend fun sensitivity(host: BackendHost, up: Boolean): Unit = notSupported("Seek sensitivity")
 
     /** Release everything (app closing / switching backend). Must not throw. */
     fun release(host: BackendHost) {}

@@ -40,6 +40,8 @@ object ReportSender {
         appendLine()
         appendLine("=== State ===")
         appendLine("backend=${s.backendId} powered=${s.powered} band=${s.band} freq=${s.freqKhz} status=${s.status}")
+        appendLine("tuner: region=${s.region} ${s.bandInfo?.describe() ?: "no band info"} sensFm=${s.sensFm} sensAm=${s.sensAm} " +
+            "opts=${s.opts.entries.joinToString { "${it.key}=${if (it.value) "on" else "off"}" }.ifEmpty { "none reported" }}")
         s.error?.let { appendLine("error=${it.title} | ${it.hint}"); if (full) appendLine(it.technical.take(1500)) }
         RadioController.learnResult.value?.let { l ->
             appendLine(); appendLine("=== Learn tuner commands ==="); l.forEach { appendLine(it) }
