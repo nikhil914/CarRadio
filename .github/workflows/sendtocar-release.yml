@@ -1,0 +1,39 @@
+name: Release Send to Car
+
+# Push a tag like sendtocar-v0.1.0 to publish the Send to Car APK. It is published as a
+# pre-release so it never becomes "latest": Car Radio's in-app updater reads releases/latest.
+on:
+  push:
+    tags: ['sendtocar-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and build
+        run: ./gradlew :sendtocar:testDebugUnitTest :sendtocar:assembleRelease
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' sendtocar/build.gradle.kts)
+          if [ "${TAG#sendtocar-v}" != "$VERSION" ]; then
+            echo "::error::Tag $TAG does not match versionName $VERSION in sendtocar/build.gradle.kts"; exit 1
+          fi
+          OUT="SendToCar-$VERSION.apk"
+          cp sendtocar/build/outputs/apk/release/sendtocar-release.apk "$OUT"
+          gh release create "$TAG" "$OUT" --target "${{ github.sha }}" --prerelease --latest=false \
+            --title "Send to Car $VERSION" \
+            --notes "Install the same APK on the car unit and on the phone. SHA-256: \`$(sha256sum "$OUT" | cut -d' ' -f1)\`"
