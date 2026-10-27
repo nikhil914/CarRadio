@@ -30,6 +30,8 @@ object AppLog {
 
     private var file: File? = null
     private var writer: BufferedWriter? = null
+    /** Unflushed info lines exist; the 2 s timer does nothing (no disk I/O) when false. */
+    @Volatile private var dirty = false
     private val fmt = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
     private val memory = ArrayDeque<String>(MAX_MEMORY_LINES)
     private val _lines = MutableStateFlow<List<String>>(emptyList())
@@ -71,7 +73,7 @@ object AppLog {
             writer?.apply {
                 write(line); newLine()
                 if (t != null && level == "E") { write(stack(t)); newLine() }
-                if (level != "I") flush()
+                if (level != "I") { this.flush(); dirty = false } else dirty = true
             }
         }
         if (memory.size >= MAX_MEMORY_LINES) memory.removeFirst()
@@ -80,7 +82,7 @@ object AppLog {
     }
 
     @Synchronized
-    fun flush() { runCatching { writer?.flush() } }
+    fun flush() { if (!dirty) return; dirty = false; runCatching { writer?.flush() } }
 
     @Synchronized
     fun clear() {
@@ -92,7 +94,7 @@ object AppLog {
         i("Log cleared")
     }
 
-    fun fullText(): String { flush(); return runCatching { file?.readText() }.getOrNull() ?: memory.joinToString("\n") }
+    fun fullText(): String { dirty = true; flush(); return runCatching { file?.readText() }.getOrNull() ?: memory.joinToString("\n") }
 
     fun stack(t: Throwable): String {
         val sw = StringWriter()

@@ -166,6 +166,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
         }
     }
     Text(s.status, color = Grey, fontSize = 13.sp, maxLines = 2)
+    UpdateBanner()
     s.error?.let { ErrorCard(it, onOpenDiagnostics) }
 
     Spacer(Modifier.height(8.dp))
@@ -389,6 +390,9 @@ fun SettingsScreen() {
         SwitchRow("Start radio automatically when the app opens", auto) { auto = it; prefs.autoStart = it }
         SwitchRow("Resume the radio when the unit starts or wakes, if it was playing", resume) { resume = it; prefs.resumeOnStart = it }
         SwitchRow("Steering-wheel next/prev go through my station group", wheel) { wheel = it; prefs.wheelUsesStations = it }
+
+        SectionHeader("Updates")
+        UpdateSettings()
 
         SectionHeader("Stations and backup")
         BackupSection()

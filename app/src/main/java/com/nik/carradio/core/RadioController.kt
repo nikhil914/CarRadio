@@ -67,12 +67,18 @@ object RadioController : BackendHost {
         val band = prefs.lastBand
         _state.value = RadioState(band = band, freqKhz = prefs.lastFreq(band), status = "Ready")
         // Crash guard: a backend start that never finished means the process died inside it.
+        // One unfinished start can be the ignition cutting power; only repeated ones disable it.
         prefs.inFlight?.let { id ->
-            prefs.markCrashed(id)
             prefs.inFlight = null
             val n = backend(id)?.name ?: id
-            AppLog.e("Crash guard: the app closed while starting \"$n\" last time. It is now skipped in automatic mode.")
-            setError(UiError("\"$n\" closed the app last time", "It has been disabled for automatic mode. You can still test it manually in Diagnostics, or re-enable it in Settings.", "in-flight marker for '$id' found at startup", id))
+            val strikes = prefs.addStrike(id)
+            if (strikes < Prefs.CRASH_STRIKES) {
+                AppLog.w("Crash guard: \"$n\" did not finish starting last time ($strikes/${Prefs.CRASH_STRIKES}). Probably power loss – trying it again.")
+            } else {
+                prefs.markCrashed(id)
+                AppLog.e("Crash guard: the app closed while starting \"$n\" $strikes times in a row. It is now skipped in automatic mode.")
+                setError(UiError("\"$n\" closed the app $strikes times in a row", "It has been disabled for automatic mode. You can still test it manually in Diagnostics, or re-enable it in Settings.", "in-flight marker for '$id' found at startup", id))
+            }
         }
     }
 
@@ -199,6 +205,7 @@ object RadioController : BackendHost {
                 b.powerOn(this, state.band, prefs.lastFreq(state.band))
             }
             if (ok) {
+                prefs.clearStrikes(b.id)
                 if (!b.caps.contains(Cap.EXTERNAL_UI)) { prefs.lastWorking = b.id; prefs.wasPlaying = true }
                 update { it.copy(powered = true, error = null) }
                 if (b.caps.contains(Cap.EXTERNAL_UI)) update { it.copy(powered = false) } else RadioService.start(app)
@@ -232,11 +239,29 @@ object RadioController : BackendHost {
         powerOnInternal(autoFallback = false)
     }
 
-    fun tune(khz: Int, band: Band = Freq.bandOf(khz)) = command("Tuning to ${Freq.format(band, khz)} ${Freq.unit(band)}") { b ->
+    /** The tune still running; a newer tune cancels it instead of queuing behind it. */
+    @Volatile private var tuneJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Shows the target at once (the MCU reports back only after ~0.6–2 s), then tunes.
+     * Tapping another station while one is still confirming cancels the first, so the
+     * latest tap always wins and nothing queues up.
+     */
+    fun tune(khz: Int, band: Band = Freq.bandOf(khz)): kotlinx.coroutines.Job {
         val t = Freq.clamp(band, khz)
-        b.tune(this, band, t)
-        update { s -> if (b.id == "fyt" || b.id == "topway") s else s.copy(freqKhz = t, band = band) }
-        prefs.lastBand = band; prefs.setLastFreq(band, t)
+        val before = state.freqKhz to state.band
+        if (state.powered) update { it.copy(freqKhz = t, band = band, stationName = if (it.freqKhz != t) "" else it.stationName, radioText = if (it.freqKhz != t) "" else it.radioText) }
+        tuneJob?.let { if (it.isActive && state.powered) { AppLog.i("Tune: newer target ${t} kHz replaces the one still running"); it.cancel() } }
+        val job = command("Tuning to ${Freq.format(band, t)} ${Freq.unit(band)}", onFail = {
+            // Put the display back on what is really playing if the tuner refused.
+            update { s -> if (s.freqKhz == t) s.copy(freqKhz = before.first, band = before.second) else s }
+        }) { b ->
+            b.tune(this, band, t)
+            update { s -> if (b.id == "fyt" || b.id == "topway") s else s.copy(freqKhz = t, band = band) }
+            prefs.lastBand = band; prefs.setLastFreq(band, t)
+        }
+        tuneJob = job
+        return job
     }
 
     fun seek(up: Boolean) = command(if (up) "Seeking up" else "Seeking down") { it.seek(this, up) }
@@ -265,7 +290,8 @@ object RadioController : BackendHost {
         }
         pendingStep = next.band to next.freqKhz
         AppLog.i("Station ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
-        tune(next.freqKhz, next.band).invokeOnCompletion { pendingStep = null }
+        val target = next.band to next.freqKhz
+        tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
     }
 
     override fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean) {
@@ -276,11 +302,17 @@ object RadioController : BackendHost {
         val next = StationLogic.neighbour(d, fromBand, fromKhz, up) ?: return
         pendingStep = next.band to next.freqKhz
         AppLog.i("Wheel ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
-        tune(next.freqKhz, next.band).invokeOnCompletion { pendingStep = null }
+        val target = next.band to next.freqKhz
+        tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
     }
 
     override fun onAccChanged(on: Boolean) {
-        if (!on) { AppLog.i("ACC off: radio state kept for resume (wasPlaying=${prefs.wasPlaying})"); return }
+        if (!on) {
+            // Power is about to go: a start interrupted now is not a crash of that method.
+            if (prefs.inFlight != null) { AppLog.i("ACC off during a start – clearing the crash guard"); prefs.inFlight = null }
+            AppLog.flush()
+            AppLog.i("ACC off: radio state kept for resume (wasPlaying=${prefs.wasPlaying})"); return
+        }
         if (!prefs.resumeOnStart || !prefs.wasPlaying) return
         AppLog.i("ACC on: re-claiming the radio source and last station")
         scope.launch { powerOnInternal(autoFallback = false) }
@@ -338,7 +370,7 @@ object RadioController : BackendHost {
      * [dwellMs] on each to collect its RDS name, then merges the hits into the station list.
      * Works with any backend that can seek; independent of vendor preset tables.
      */
-    fun scanStations(dwellMs: Long = 2500) = scope.launch {
+    fun scanStations(dwellMs: Long = 3000) = scope.launch {
         val b = active
         if (b == null || !b.caps.contains(Cap.SEEK)) {
             setError(UiError("This radio method cannot scan", "Choose the FYT method in Diagnostics, or save stations by hand.", "", b?.id)); return@launch
@@ -359,8 +391,9 @@ object RadioController : BackendHost {
                 if (!waitSettled(last, 9000)) { AppLog.i("Scan: no further station (stuck at $last)"); break }
                 val f = state.freqKhz
                 if (f <= last) { AppLog.i("Scan: wrapped to $f – band done"); break }
-                _scanProgress.value = "Found ${hits.size} · listening on ${Freq.format(band, f)} ${Freq.unit(band)}…"
-                delay(dwellMs)
+                val pct = scanPercent(band, f)
+                _scanProgress.value = "$pct% · found ${hits.size} · listening on ${Freq.format(band, f)} ${Freq.unit(band)}…"
+                waitForName(dwellMs)
                 hits += ScanHit(band, state.freqKhz, state.stationName)
                 AppLog.i("Scan hit: ${state.freqKhz} kHz \"${state.stationName}\"")
                 last = state.freqKhz
@@ -377,6 +410,28 @@ object RadioController : BackendHost {
         AppLog.i("Scan merged: ${hits.size} found, $added new")
         update { it.copy(status = "Scan: ${hits.size} stations found, $added new${if (scanCancel) " (stopped)" else ""}") }
         exec("Returning to first station") { b.tune(this@RadioController, band, hits.first().freqKhz) }
+    }
+
+    private fun scanPercent(band: Band, khz: Int): Int {
+        val (lo, hi) = if (band == Band.FM) Freq.FM_MIN to Freq.FM_MAX else Freq.AM_MIN to Freq.AM_MAX
+        return ((khz - lo) * 100 / (hi - lo).coerceAtLeast(1)).coerceIn(0, 100)
+    }
+
+    /**
+     * Stays on a found station until its RDS name has arrived and held for 400 ms, or
+     * [maxMs] passed (no RDS). Most stations name themselves in under a second, so a full FM
+     * scan drops from ~70 s to ~25 s.
+     */
+    private suspend fun waitForName(maxMs: Long) {
+        val start = System.currentTimeMillis()
+        var name = ""; var since = start
+        delay(500)
+        while (System.currentTimeMillis() - start < maxMs) {
+            val n = state.stationName
+            if (n != name) { name = n; since = System.currentTimeMillis() }
+            else if (n.isNotBlank() && System.currentTimeMillis() - since >= 400) return
+            delay(100)
+        }
     }
 
     /** After a seek: wait until the frequency moved away from [from] and then held still. */
@@ -408,7 +463,7 @@ object RadioController : BackendHost {
 
     // ------------------------------------------------------------------ plumbing
 
-    private fun command(label: String, block: suspend (RadioBackend) -> Unit) = scope.launch {
+    private fun command(label: String, onFail: () -> Unit = {}, block: suspend (RadioBackend) -> Unit) = scope.launch {
         val b = active
         if (b == null) { setError(UiError("No radio method selected", "Open Diagnostics and pick one.", "", null)); return@launch }
         if (!state.powered && b.caps.contains(Cap.TUNE)) {
@@ -416,7 +471,7 @@ object RadioController : BackendHost {
             powerOnInternal(autoFallback = false)
             if (!state.powered) return@launch
         }
-        exec(label) { block(b) }
+        if (!exec(label) { block(b) }) onFail()
     }
 
     // 45 s: worst case is walking the whole FM band with single MCU steps (~200 steps).
@@ -436,6 +491,10 @@ object RadioController : BackendHost {
         } catch (e: TimeoutCancellationException) {
             AppLog.e("✖ $label: timed out after ${timeoutMs / 1000}s")
             setError(UiError("\"$label\" took longer than ${timeoutMs / 1000} s", "The vendor service did not answer. Reboot the head unit (ACC off/on) and retry, or try another method.", "timeout", b?.id))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Replaced by a newer command (another station tapped): not an error.
+            AppLog.i("… $label replaced by a newer command")
+            throw e
         } catch (e: SecurityException) {
             AppLog.e("✖ $label: permission denied", e)
             setError(UiError("Android blocked this (permission denied)", "This method needs system privileges on this firmware. Try another method.", AppLog.stack(e).take(1500), b?.id))
