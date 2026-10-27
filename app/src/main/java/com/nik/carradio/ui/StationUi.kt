@@ -207,6 +207,11 @@ internal fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> 
     var fav by remember { mutableStateOf(st.favourite) }
     var inGroups by remember { mutableStateOf(st.groups) }
     var afText by remember { mutableStateOf(st.afKhz.joinToString(", ") { Freq.format(Band.FM, it) }) }
+    var stream by remember { mutableStateOf(st.streamUrl) }
+    val lookupRunning by com.nik.carradio.core.StationLookup.running.collectAsState()
+    val liveSt = StationStore.data.collectAsState().value.stations.firstOrNull { it.id == st.id }
+    // A lookup for this station fills the field when it finishes.
+    LaunchedEffect(liveSt?.streamUrl) { if (liveSt != null && liveSt.streamUrl.isNotBlank() && stream.isBlank()) stream = liveSt.streamUrl }
     val parsed = Freq.parseUser(freqText)
     AlertDialog(
         onDismissRequest = onClose,
@@ -220,6 +225,16 @@ internal fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> 
                 OutlinedTextField(afText, { afText = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     label = { Text("Alternative frequencies (e.g. 99.3, 101.1)") },
                     supportingText = { Text("Same station on other transmitters. Double-tap the station to switch between them.") })
+                OutlinedTextField(stream, { stream = it.trim() }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Internet stream (http/https)") },
+                    isError = stream.isNotBlank() && !stream.startsWith("http"),
+                    supportingText = { Text("Lets you listen online when FM is weak: the \"Online\" button on the Radio screen.") })
+                val ctx0 = LocalContext.current
+                TextButton(enabled = !lookupRunning && name.isNotBlank(), onClick = {
+                    StationStore.update { d -> d.copy(stations = d.stations.map { if (it.id == st.id) it.copy(name = name.trim(), streamUrl = "") else it }) }
+                    stream = ""
+                    com.nik.carradio.core.StationLookup.run(ctx0, only = st.id)
+                }) { Text(if (lookupRunning) "Looking up…" else "Find logo and stream online") }
                 Text("Groups", color = Grey, fontSize = 13.sp)
                 FlowRowCompat {
                     groups.forEach { g ->
@@ -252,6 +267,7 @@ internal fun EditStationDialog(st: Station, groups: List<Group>, onClose: () -> 
                 StationStore.update { d -> d.copy(stations = d.stations.map {
                     if (it.id == st.id) it.copy(name = name.trim(), freqKhz = k, band = Freq.bandOf(k), favourite = fav, groups = inGroups,
                         afKhz = StationLogic.parseAfList(afText).filter { a -> kotlin.math.abs(a - k) >= StationLogic.SAME_KHZ },
+                        streamUrl = stream.takeIf { u -> u.startsWith("http") } ?: "",
                         verified = it.verified || k != st.freqKhz) else it }) }
                 onClose()
             }) { Text("Save") }

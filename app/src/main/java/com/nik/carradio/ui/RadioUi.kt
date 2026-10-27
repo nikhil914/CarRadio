@@ -79,7 +79,7 @@ fun RadioScreen(onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit) {
             TopRow(s, probing, onEnter = { showEntry = true }, onTuner = { showTuner = true })
             UpdateBanner()
             s.error?.let { ErrorCard(it, onOpenDiagnostics) }
-            if (s.caps.contains(Cap.EXTERNAL_UI) || s.caps.contains(Cap.STREAM)) {
+            if (s.onlineStation == null && (s.caps.contains(Cap.EXTERNAL_UI) || s.caps.contains(Cap.STREAM))) {
                 NowPlaying(s, Modifier.weight(1f), onFullscreen)
                 SimpleControls(s)
             } else {
@@ -106,6 +106,11 @@ private fun TopRow(s: RadioState, probing: Boolean, onEnter: () -> Unit, onTuner
             Text(s.backendName, color = Grey.copy(alpha = .6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         val tuneable = s.caps.contains(Cap.TUNE)
+        val data by StationStore.data.collectAsState()
+        val current = remember(data, s.band, s.freqKhz) { StationLogic.find(data, s.band, s.freqKhz) }
+        if (s.onlineStation != null) PillButton("Online", selected = true) {}
+        if (s.onlineStation != null) PillButton("Back to FM") { RadioController.backToFm() }
+        else if (tuneable && current?.streamUrl?.isNotBlank() == true) PillButton("Online") { RadioController.listenOnline(current) }
         if (tuneable) {
             if (s.caps.contains(Cap.BAND_AM)) {
                 PillButton(if (s.band == Band.FM) "FM" else "AM", selected = true) { RadioController.setBand(if (s.band == Band.FM) Band.AM else Band.FM) }
@@ -144,12 +149,14 @@ private fun NowPlaying(s: RadioState, modifier: Modifier, onFullscreen: () -> Un
     val data by StationStore.data.collectAsState()
     val station = remember(data, s.band, s.freqKhz) { StationLogic.find(data, s.band, s.freqKhz) }
     val accent = if (s.powered) MaterialTheme.colorScheme.primary else Grey
+    val ui by com.nik.carradio.core.UiConfig.settings.collectAsState()
+    val showSpeed = ui.mainSpeed
     BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         val wide = maxWidth > 600.dp
         val logoSize: Dp = min(maxHeight - 24.dp, if (wide) 190.dp else 120.dp).coerceAtLeast(56.dp)
         // Name + frequency + radio text + chips must fit the height left between top row and controls.
         val freqSize = when { maxHeight < 210.dp -> 56.sp; maxHeight < 270.dp -> 68.sp; wide -> 92.sp; else -> 72.sp }
-        AnimatedContent(targetState = Triple(station, s.band, s.freqKhz), label = "station", contentKey = { Triple(it.first?.id, it.second, it.third) },
+        val content: @Composable (Modifier) -> Unit = { m -> AnimatedContent(modifier = m, targetState = Triple(station, s.band, s.freqKhz), label = "station", contentKey = { Triple(it.first?.id, it.second, it.third) },
             transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) }) { (st, band, khz) ->
             val logoStation = st ?: Station(0, band, khz, name = s.stationName)
             if (!wide) {
@@ -161,10 +168,18 @@ private fun NowPlaying(s: RadioState, modifier: Modifier, onFullscreen: () -> Un
                 return@AnimatedContent
             }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Box(Modifier.combinedClickableCompat(onClick = onFullscreen)) { StationLogo(logoStation, logoSize) }
-                Spacer(Modifier.width(28.dp))
+                Box(Modifier.combinedClickableCompat(onClick = onFullscreen)) { StationLogo(logoStation, if (showSpeed) logoSize * 0.85f else logoSize) }
+                Spacer(Modifier.width(if (showSpeed) 20.dp else 28.dp))
                 Column(Modifier.weight(1f)) { NowPlayingText(s, st, band, khz, accent, freqSize, onFullscreen, center = false) }
             }
+        } }
+        // Outside the crossfade, so the GPS listener is not restarted on every station change.
+        if (wide) Row(verticalAlignment = Alignment.CenterVertically) {
+            content(Modifier.weight(1f))
+            if (showSpeed) { Spacer(Modifier.width(16.dp)); SpeedPanel(Modifier.width(120.dp)) }
+        } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            content(Modifier)
+            if (showSpeed) { Spacer(Modifier.height(16.dp)); SpeedPanel() }
         }
     }
 }
@@ -181,24 +196,26 @@ private fun NowPlayingText(s: RadioState, station: Station?, band: Band, khz: In
             Text(Freq.format(band, khz), fontSize = freqSize, fontWeight = FontWeight.Light, color = accent, lineHeight = freqSize)
             Text(" " + Freq.unit(band), fontSize = 22.sp, color = Grey, modifier = Modifier.padding(bottom = 14.dp))
         }
+        var history by remember { mutableStateOf(false) }
         Text(s.radioText.ifBlank { " " }, fontSize = 18.sp, color = Grey, maxLines = 1, textAlign = align,
-            modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1500))
+            modifier = Modifier.fillMaxWidth().combinedClickableCompat(onClick = { history = true }).basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1500))
+        if (history) SongHistoryDialog { history = false }
         RdsFlags(s)
     }
 }
 
 @Composable
 private fun Controls(s: RadioState, height: Dp, captions: Boolean) {
-    val tuneable = s.caps.contains(Cap.TUNE)
+    val tuneable = s.caps.contains(Cap.TUNE) || s.onlineStation != null
     val seek = s.caps.contains(Cap.SEEK)
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().height(height)) {
-        ControlButton(RadioIcons.Rewind, if (captions) "hold: step" else null, Modifier.weight(1f), enabled = seek || tuneable,
+        ControlButton(RadioIcons.Rewind, if (captions) "hold: step" else null, Modifier.weight(1f), enabled = s.caps.contains(Cap.TUNE),
             onClick = { if (seek) RadioController.seek(false) else RadioController.step(false) }, onLong = { RadioController.step(false) })
         ControlButton(RadioIcons.Previous, if (captions) "station" else null, Modifier.weight(1.2f), enabled = tuneable, onClick = { RadioController.stationStep(false) })
         ControlButton(if (s.powered) RadioIcons.Power else RadioIcons.Play, if (captions) (if (s.powered) "radio off" else "radio on") else null,
             Modifier.weight(1.4f), primary = true, enabled = s.backendId != null, onClick = { RadioController.powerToggle(); Unit })
         ControlButton(RadioIcons.Next, if (captions) "station" else null, Modifier.weight(1.2f), enabled = tuneable, onClick = { RadioController.stationStep(true) })
-        ControlButton(RadioIcons.Forward, if (captions) "hold: step" else null, Modifier.weight(1f), enabled = seek || tuneable,
+        ControlButton(RadioIcons.Forward, if (captions) "hold: step" else null, Modifier.weight(1f), enabled = s.caps.contains(Cap.TUNE),
             onClick = { if (seek) RadioController.seek(true) else RadioController.step(true) }, onLong = { RadioController.step(true) })
     }
 }

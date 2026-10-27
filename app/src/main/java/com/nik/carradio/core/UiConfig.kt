@@ -28,6 +28,12 @@ data class UiSettings(
     val nightEnd: Int = 6 * 60 + 30,
     /** GPS speed in full screen (needs location permission; GPS runs only while visible). */
     val fullscreenSpeed: Boolean = false,
+    /** GPS speed on the Radio screen too (GPS runs only while that screen is visible). */
+    val mainSpeed: Boolean = false,
+    /** Floating mini player over other apps (navigation) while the radio plays. */
+    val floatingPlayer: Boolean = false,
+    /** Keep a history of song titles from radio text. */
+    val songHistory: Boolean = true,
 )
 
 /** Appearance settings as a flow, so the UI re-themes the moment a setting changes. */
@@ -50,6 +56,9 @@ object UiConfig {
             nightThemeId = sp.getString("night_theme", "nightred") ?: "nightred",
             nightStart = sp.getInt("night_start", 19 * 60), nightEnd = sp.getInt("night_end", 6 * 60 + 30),
             fullscreenSpeed = sp.getBoolean("fs_speed", false),
+            mainSpeed = sp.getBoolean("main_speed", false),
+            floatingPlayer = sp.getBoolean("floating", false),
+            songHistory = sp.getBoolean("song_history", true),
         )
     }
 
@@ -61,6 +70,7 @@ object UiConfig {
             .putFloat("text", n.textScale).putInt("fs_after", n.fullscreenAfterSec)
             .putBoolean("fs_clock", n.fullscreenClock).putBoolean("logos", n.showLogos)
             .putString("night", n.nightMode.name).putString("night_theme", n.nightThemeId)
-            .putInt("night_start", n.nightStart).putInt("night_end", n.nightEnd).putBoolean("fs_speed", n.fullscreenSpeed).apply()
+            .putInt("night_start", n.nightStart).putInt("night_end", n.nightEnd).putBoolean("fs_speed", n.fullscreenSpeed)
+            .putBoolean("main_speed", n.mainSpeed).putBoolean("floating", n.floatingPlayer).putBoolean("song_history", n.songHistory).apply()
     }
 }
