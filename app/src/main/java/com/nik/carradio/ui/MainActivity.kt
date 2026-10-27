@@ -32,6 +32,11 @@ import kotlinx.coroutines.delay
 import com.nik.carradio.core.ReportSender
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        com.nik.carradio.core.Updater.onResume(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)

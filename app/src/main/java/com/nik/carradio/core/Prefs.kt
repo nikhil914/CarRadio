@@ -68,10 +68,14 @@ class Prefs(context: Context) {
     fun setFytVariant(op: String, v: Int) = sp.edit().putInt("fyt_v2_$op", v).apply()
     fun clearFytVariants() = sp.edit().remove("fyt_v2_tune").remove("fyt_v2_step").remove("fyt_v2_seek").apply()
 
-    /** Which FYT direct-tune payload worked on this unit (learned at runtime). */
-    var fytTuneMode: Int
-        get() = sp.getInt("fyt_tune_mode", -1)
-        set(v) = sp.edit().putInt("fyt_tune_mode", v).apply()
+    /** Check GitHub Releases for a newer Car Radio once a day when online. */
+    var autoCheckUpdates: Boolean
+        get() = sp.getBoolean("auto_update_check", true)
+        set(v) = sp.edit().putBoolean("auto_update_check", v).apply()
+
+    var lastUpdateCheck: Long
+        get() = sp.getLong("last_update_check", 0L)
+        set(v) = sp.edit().putLong("last_update_check", v).apply()
 
     // Presets: 12 slots, stored as kHz (0 = empty).
     fun preset(slot: Int): Int = sp.getInt("preset_$slot", 0)
@@ -90,7 +94,16 @@ class Prefs(context: Context) {
     fun markCrashed(id: String) {
         sp.edit().putStringSet("crashed", crashedBackends() + id).commit()
     }
-    fun clearCrashed() = sp.edit().remove("crashed").commit()
+    fun clearCrashed() { sp.edit().remove("crashed").apply(); backends().forEach { clearStrikes(it) } }
 
-    companion object { const val PRESET_SLOTS = 12 }
+    /**
+     * Unfinished starts in a row. One can be the unit losing power (ACC off) mid-start;
+     * only [CRASH_STRIKES] in a row disable a method.
+     */
+    fun crashStrikes(id: String): Int = sp.getInt("strikes_$id", 0)
+    fun addStrike(id: String): Int = (crashStrikes(id) + 1).also { sp.edit().putInt("strikes_$id", it).commit() }
+    fun clearStrikes(id: String) { if (crashStrikes(id) != 0) sp.edit().remove("strikes_$id").apply() }
+    private fun backends() = sp.all.keys.filter { it.startsWith("strikes_") }.map { it.removePrefix("strikes_") }
+
+    companion object { const val PRESET_SLOTS = 12; const val CRASH_STRIKES = 2 }
 }

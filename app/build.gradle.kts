@@ -13,8 +13,8 @@ android {
         // Head units in the field run Android 6 – 13; 21 keeps even very old units installable.
         minSdk = 21
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.0.2"
+        versionCode = 9
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -77,4 +77,6 @@ dependencies {
     // Folder picker for importing a logo pack (SAF tree URIs).
     implementation("androidx.documentfile:documentfile:1.0.1")
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM unit tests (android.jar only has stubs).
+    testImplementation("org.json:json:20240303")
 }

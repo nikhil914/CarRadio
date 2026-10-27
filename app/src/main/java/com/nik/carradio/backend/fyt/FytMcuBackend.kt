@@ -40,6 +40,9 @@ class FytMcuBackend : RadioBackend {
 
     private fun expect(ms: Long = 2500) { expectUntil = System.currentTimeMillis() + ms }
 
+    /** Last frequency we asked for and when: (kHz, time). */
+    @Volatile private var commanded: Pair<Int, Long>? = null
+
     private val steerCb = Syu.Callback { code, ints, _, _ ->
         val dir = when {
             ints?.any { it == Syu.STEER_NEXT } == true -> true
@@ -123,7 +126,10 @@ class FytMcuBackend : RadioBackend {
                 if (khz == null) { AppLog.w("FYT: unknown frequency value $v"); return }
                 val prev = reportedKhz
                 reportedKhz = khz
-                if (prev > 0 && khz != prev && System.currentTimeMillis() > expectUntil) onVendorTune(h, prev, khz)
+                // A slow MCU can report our own target after the expect window: never treat that
+                // as a wheel jump, or one press would move two stations.
+                val ours = commanded?.let { (t, at) -> abs(t - khz) < 5 && System.currentTimeMillis() - at < 8000 } == true
+                if (prev > 0 && khz != prev && !ours && System.currentTimeMillis() > expectUntil) onVendorTune(h, prev, khz)
                 val band = Freq.bandOf(khz)
                 h.update { it.copy(freqKhz = khz, band = band, stationName = if (it.freqKhz != khz) "" else it.stationName, radioText = if (it.freqKhz != khz) "" else it.radioText, pty = if (it.freqKhz != khz) 0 else it.pty) }
                 h.prefs.setLastFreq(band, khz)
@@ -275,6 +281,7 @@ class FytMcuBackend : RadioBackend {
         val target = Freq.clamp(band, khz)
         if (currentBand() != null && currentBand() != band) setBand(host, band)
         if (abs(reportedKhz - target) < 5) return
+        commanded = target to System.currentTimeMillis()
         if (runLearning(host, "tune", tuneVariants(band, target), 2500) { abs(reportedKhz - target) < 5 } != null) return
         // No direct format works: walk there with steps (needs a working step format).
         if (reportedKhz <= 0) {

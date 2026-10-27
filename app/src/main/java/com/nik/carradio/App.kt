@@ -21,5 +21,6 @@ class App : Application() {
         com.nik.carradio.core.UiConfig.init(this)
         com.nik.carradio.ui.LogoStore.init(this)
         com.nik.carradio.service.Widgets.start(this)
+        com.nik.carradio.core.Updater.autoCheck(this)
     }
 }
