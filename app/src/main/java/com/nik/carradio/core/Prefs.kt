@@ -66,7 +66,12 @@ class Prefs(context: Context) {
     /** Learned FYT command format per operation ("tune", "step", "seek"); -1 = not learned. */
     fun fytVariant(op: String): Int = sp.getInt("fyt_v2_$op", -1)
     fun setFytVariant(op: String, v: Int) = sp.edit().putInt("fyt_v2_$op", v).apply()
-    fun clearFytVariants() = sp.edit().remove("fyt_v2_tune").remove("fyt_v2_step").remove("fyt_v2_seek").apply()
+    fun clearFytVariants() = sp.edit().remove("fyt_v2_tune").remove("fyt_v2_step").remove("fyt_v2_seek").remove("fyt_sens_map").apply()
+
+    /** FYT sensitivity command mapping learned on first use; -1 = not learned. */
+    var fytSensMap: Int
+        get() = sp.getInt("fyt_sens_map", -1)
+        set(v) = sp.edit().putInt("fyt_sens_map", v).apply()
 
     /** Check GitHub Releases for a newer Car Radio once a day when online. */
     var autoCheckUpdates: Boolean

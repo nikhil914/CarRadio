@@ -274,6 +274,16 @@ object RadioController : BackendHost {
         update { it.copy(band = band) }
     }
 
+    // ------------------------------------------------------------------ tuner settings
+
+    val activeBackend: RadioBackend? get() = active
+
+    fun setOption(opt: TunerOpt, on: Boolean) = command("${opt.label}: ${if (on) "on" else "off"}") { it.setOption(this, opt, on) }
+
+    fun setRegion(index: Int) = command("Region: ${active?.regions?.getOrNull(index) ?: index}") { it.setRegion(this, index) }
+
+    fun sensitivity(up: Boolean) = command(if (up) "Sensitivity up" else "Sensitivity down") { it.sensitivity(this, up) }
+
     // ------------------------------------------------------------------ stations
 
     /** Target of the last station step still in flight, so fast wheel presses don't repeat one. */

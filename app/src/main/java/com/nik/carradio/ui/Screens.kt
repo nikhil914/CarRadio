@@ -79,6 +79,7 @@ import com.nik.carradio.core.ProbeStatus
 import com.nik.carradio.core.Pty
 import com.nik.carradio.core.RadioController
 import com.nik.carradio.core.RadioState
+import com.nik.carradio.core.TunerOpt
 import com.nik.carradio.core.UiError
 
 internal val Green = Color(0xFF66BB6A)
@@ -177,7 +178,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
         Spacer(Modifier.width(8.dp))
         Column(Modifier.padding(bottom = 18.dp)) {
             Text(Freq.unit(s.band), fontSize = 22.sp)
-            Text(s.band.name + (s.stereo?.let { if (it) " · ST" else " · MONO" } ?: "") + (s.signal?.let { " · sig $it" } ?: ""), color = Grey)
+            Text(s.band.name + (s.signal?.let { " · sig $it" } ?: ""), color = Grey)
         }
     }
     if (s.stationName.isNotBlank()) Text(s.stationName, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
@@ -193,6 +194,7 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
     } else if (s.caps.contains(Cap.STREAM)) {
         BigButton(if (s.powered) "STOP STREAM" else "PLAY STREAM", Modifier.fillMaxWidth()) { RadioController.powerToggle() }
     } else {
+        var showTuner by remember { mutableStateOf(false) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             BigButton("◀◀\nSEEK", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.seek(false) }
             BigButton("◀\nSTEP", Modifier.weight(1f), enabled = tuneable) { RadioController.step(false) }
@@ -206,8 +208,10 @@ private fun ColumnScope.MainPanel(s: RadioState, probing: Boolean, onOpenDiagnos
             SmallButton("AM", Modifier.weight(1f), selected = s.band == Band.AM, enabled = s.caps.contains(Cap.BAND_AM)) { RadioController.setBand(Band.AM) }
             SmallButton("SCAN", Modifier.weight(1f), enabled = s.caps.contains(Cap.SEEK)) { RadioController.scanStations() }
             SmallButton("ENTER", Modifier.weight(1f), enabled = tuneable) { onEnter() }
-            SmallButton(if (s.muted) "UNMUTE" else "MUTE", Modifier.weight(1f), enabled = s.caps.contains(Cap.MUTE)) { RadioController.setMute(!s.muted) }
+            if (s.caps.contains(Cap.MUTE)) SmallButton(if (s.muted) "UNMUTE" else "MUTE", Modifier.weight(1f)) { RadioController.setMute(!s.muted) }
+            else SmallButton("TUNER", Modifier.weight(1f), enabled = RadioController.activeBackend?.tunerOptions?.isNotEmpty() == true) { showTuner = true }
         }
+        if (showTuner) TunerDialog { showTuner = false }
     }
 }
 
@@ -232,11 +236,15 @@ private fun ErrorCard(e: UiError, onOpenDiagnostics: () -> Unit) {
 @Composable
 private fun RdsFlags(s: RadioState) {
     val items = buildList {
+        s.stereo?.let { add(if (it) "ST" to true else "MONO" to false) }
         Pty.name(s.pty).takeIf { it.isNotBlank() }?.let { add(it to true) }
         s.tp?.let { add("TP" to it) }
-        s.ta?.let { add("TA" to it) }
+        // TA lit = traffic announcements wanted; "TRAFFIC" = one is on air now.
+        (s.opts[TunerOpt.TA] ?: s.ta)?.let { add("TA" to it) }
+        if (s.ta == true && s.opts[TunerOpt.TA] != null) add("TRAFFIC" to true)
         s.af?.let { add("AF" to it) }
         s.loc?.let { add(if (it) "LOC" to true else "DX" to true) }
+        if (s.opts[TunerOpt.RDS] == false) add("RDS OFF" to false)
     }
     if (items.isEmpty()) return
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
@@ -390,6 +398,9 @@ fun SettingsScreen() {
         SwitchRow("Start radio automatically when the app opens", auto) { auto = it; prefs.autoStart = it }
         SwitchRow("Resume the radio when the unit starts or wakes, if it was playing", resume) { resume = it; prefs.resumeOnStart = it }
         SwitchRow("Steering-wheel next/prev go through my station group", wheel) { wheel = it; prefs.wheelUsesStations = it }
+
+        SectionHeader("Tuner")
+        TunerSettings()
 
         SectionHeader("Updates")
         UpdateSettings()

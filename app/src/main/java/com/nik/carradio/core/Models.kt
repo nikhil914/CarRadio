@@ -57,6 +57,15 @@ data class RadioState(
     val af: Boolean? = null,
     val loc: Boolean? = null,
     val signal: Int? = null,
+    /** Tuner settings as the hardware reports them; a missing key = not reported (yet). */
+    val opts: Map<TunerOpt, Boolean> = emptyMap(),
+    /** Region index of the tuner (FYT: 0 USA … 4 Japan); null = not reported. */
+    val region: Int? = null,
+    /** Band limits and step the tuner uses in its region. */
+    val bandInfo: BandInfo? = null,
+    /** Seek sensitivity level per band as reported by the tuner. */
+    val sensFm: Int? = null,
+    val sensAm: Int? = null,
     val scanning: Boolean = false,
     val muted: Boolean = false,
     val status: String = "Starting…",
@@ -131,4 +140,20 @@ object Freq {
         }
         return null
     }
+}
+
+/** On/off tuner settings a backend may support. */
+enum class TunerOpt(val label: String, val hint: String) {
+    STEREO("Stereo", "Off plays mono: less hiss on weak, distant stations."),
+    LOCAL("Local stations only (LOC)", "On: seek and scan stop only on strong nearby stations. Off (DX): weak, distant ones too."),
+    AF("Follow alternative frequencies (AF)", "The tuner switches to another frequency of the same station when the signal fades."),
+    TA("Traffic announcements (TA)", "Interrupts other sources for traffic news on stations that send it."),
+    RDS("RDS", "Station names, radio text and programme type. Off can help on noisy stations."),
+    AUTO_SENS("Automatic seek sensitivity", "Off lets you set the sensitivity by hand below."),
+}
+
+/** A band as the tuner sees it in its region: [minKhz]–[maxKhz] in [stepKhz] steps. */
+@androidx.compose.runtime.Immutable
+data class BandInfo(val band: Band, val minKhz: Int, val maxKhz: Int, val stepKhz: Int) {
+    fun describe() = "${band.name} ${Freq.format(band, minKhz)}–${Freq.format(band, maxKhz)} ${Freq.unit(band)}, $stepKhz kHz steps"
 }

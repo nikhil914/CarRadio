@@ -9,6 +9,7 @@ import com.nik.carradio.core.Freq
 import com.nik.carradio.core.ProbeResult
 import com.nik.carradio.core.ProbeStatus
 import com.nik.carradio.core.RadioException
+import com.nik.carradio.core.TunerOpt
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -140,13 +141,27 @@ class FytMcuBackend : RadioBackend {
             }
             Syu.U_PS_TEXT, Syu.U_RDS_CHANNEL_TEXT -> strs?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { s -> h.update { it.copy(stationName = s) } }
             Syu.U_RDS_TEXT -> strs?.firstOrNull()?.trim()?.let { s -> h.update { it.copy(radioText = s) } }
-            Syu.U_STEREO -> if (v != null) h.update { it.copy(stereo = v != 0) }
+            Syu.U_STEREO -> if (v != null) h.update { it.copy(stereo = v != 0, opts = it.opts + (TunerOpt.STEREO to (v != 0))) }
             Syu.U_SEARCH_STATE -> if (v != null) h.update { it.copy(scanning = v != 0) }
             Syu.U_PTY_ID -> if (v != null) h.update { it.copy(pty = v and 0x1f) }
             Syu.U_RDS_TA -> if (v != null) h.update { it.copy(ta = v != 0) }
             Syu.U_RDS_TP -> if (v != null) h.update { it.copy(tp = v != 0) }
-            Syu.U_RDS_AF_ENABLE -> if (v != null) h.update { it.copy(af = v != 0) }
-            Syu.U_LOC -> if (v != null) h.update { it.copy(loc = v != 0) }
+            Syu.U_RDS_AF_ENABLE -> if (v != null) h.update { it.copy(af = v != 0, opts = it.opts + (TunerOpt.AF to (v != 0))) }
+            Syu.U_LOC -> if (v != null) h.update { it.copy(loc = v != 0, opts = it.opts + (TunerOpt.LOCAL to (v != 0))) }
+            Syu.U_RDS_TA_ENABLE -> if (v != null) h.update { it.copy(opts = it.opts + (TunerOpt.TA to (v != 0))) }
+            Syu.U_RDS_ENABLE -> if (v != null) h.update { it.copy(opts = it.opts + (TunerOpt.RDS to (v != 0))) }
+            Syu.U_AUTO_SENSITY -> if (v != null) h.update { it.copy(opts = it.opts + (TunerOpt.AUTO_SENS to (v != 0))) }
+            Syu.U_AREA -> if (v != null) {
+                if (h.state.region != v) AppLog.i("FYT: tuner region = $v (${Syu.AREAS.getOrElse(v) { "unknown" }})")
+                h.update { it.copy(region = v) }
+            }
+            Syu.U_EXTRA_FREQ_INFO -> Syu.bandInfo(ints)?.let { bi ->
+                if (h.state.bandInfo != bi) AppLog.i("FYT: band limits ${bi.describe()}")
+                h.update { it.copy(bandInfo = bi) }
+            }
+            Syu.U_SENSITY_AM -> if (v != null) h.update { it.copy(sensAm = v) }
+            Syu.U_SENSITY_FM -> if (v != null) h.update { it.copy(sensFm = v) }
+            Syu.U_CHANNEL_FREQ -> if (ints != null && ints.isNotEmpty()) AppLog.i("FYT: preset frequencies ${ints.take(24)}")
         }
     }
 
@@ -316,8 +331,103 @@ class FytMcuBackend : RadioBackend {
     }
 
     override suspend fun scan(host: BackendHost) {
-        ensure(host); expect(120_000); radio!!.cmd(Syu.C_SEARCH, intArrayOf(Syu.SEARCH_STATE_AUTO))
+        ensure(host); expect(120_000); radio!!.cmd(Syu.C_SEARCH, intArrayOf(Syu.SEARCH_START))
         host.update { it.copy(scanning = true) }
+    }
+
+    // ------------------------------------------------------------ tuner settings (1.2)
+
+    override val tunerOptions = setOf(TunerOpt.STEREO, TunerOpt.LOCAL, TunerOpt.AF, TunerOpt.TA, TunerOpt.RDS, TunerOpt.AUTO_SENS)
+    override val regions get() = Syu.AREAS
+    override val hasSensitivity = true
+
+    /**
+     * Stereo, LOC, AF and TA are toggles in com.syu.ms (only value 2 acts), so they are sent
+     * only when the reported state differs. RDS and auto sensitivity take 0/1 directly.
+     */
+    override suspend fun setOption(host: BackendHost, opt: TunerOpt, on: Boolean) {
+        ensure(host)
+        val cur = host.state.opts[opt]
+        if (cur == on) return
+        val m = radio!!
+        when (opt) {
+            TunerOpt.RDS -> m.cmd(Syu.C_RDS_ENABLE, intArrayOf(if (on) 1 else 0))
+            TunerOpt.AUTO_SENS -> m.cmd(Syu.C_AUTO_SENSITY, intArrayOf(if (on) 1 else 0))
+            else -> {
+                if (cur == null) AppLog.w("FYT: ${opt.label} state not reported yet – toggling once")
+                val c = when (opt) {
+                    TunerOpt.STEREO -> Syu.C_STEREO; TunerOpt.LOCAL -> Syu.C_LOC
+                    TunerOpt.AF -> Syu.C_RDS_AF_ENABLE; else -> Syu.C_RDS_TA_ENABLE
+                }
+                m.cmd(c, intArrayOf(Syu.TOGGLE))
+            }
+        }
+        if (waitFor(2000) { host.state.opts[opt] == on }) { AppLog.i("FYT: ${opt.label} = ${if (on) "on" else "off"} (confirmed)"); return }
+        if (cur == null) {
+            // Nothing is reported for it on this firmware: show what we asked for.
+            AppLog.w("FYT: ${opt.label} sent, the tuner does not report it – showing it as ${if (on) "on" else "off"}")
+            host.update { it.copy(opts = it.opts + (opt to on)) }
+            return
+        }
+        throw RadioException("The tuner did not change \"${opt.label}\"", "It still reports ${if (cur) "on" else "off"}. Some units only allow this in the stock radio's settings.")
+    }
+
+    override suspend fun setRegion(host: BackendHost, index: Int) {
+        ensure(host)
+        require(index in Syu.AREAS.indices)
+        if (host.state.region == index) return
+        expect(5000)
+        radio!!.cmd(Syu.C_AREA, intArrayOf(index))
+        if (!waitFor(3000) { host.state.region == index }) {
+            if (host.state.region == null) { host.update { it.copy(region = index) }; AppLog.w("FYT: region sent, not reported back"); return }
+            throw RadioException("The tuner kept its region (${Syu.AREAS.getOrElse(host.state.region!!) { "?" }})",
+                "Some units lock the region. Set it in Settings → Factory settings → Radio instead.")
+        }
+        AppLog.i("FYT: region is now ${Syu.AREAS[index]}")
+    }
+
+    /**
+     * cmd 14 takes [band index, -1 or -2]; which index is FM and which value is "higher" is not
+     * in the firmware's names. The first press checks which reported value moved and
+     * remembers the mapping (pref fyt_sens_map: bit 0 = band swapped, bit 1 = direction swapped).
+     */
+    override suspend fun sensitivity(host: BackendHost, up: Boolean) {
+        ensure(host)
+        val fm = (currentBand() ?: host.state.band) == Band.FM
+        val map = host.prefs.fytSensMap
+        val learned = map >= 0
+        var bits = if (learned) map else 0
+        fun send(b: Int) {
+            val bandIdx = (if (fm) 1 else 0) xor (b and 1)
+            val dir = if (up xor ((b shr 1) and 1 == 1)) -1 else -2
+            radio!!.cmd(Syu.C_SENSITY, intArrayOf(bandIdx, dir))
+        }
+        fun mine() = if (fm) host.state.sensFm else host.state.sensAm
+        fun other() = if (fm) host.state.sensAm else host.state.sensFm
+        val (beforeMine, beforeOther) = mine() to other()
+        send(bits)
+        val moved = waitFor(1500) { mine() != beforeMine || other() != beforeOther }
+        if (!moved) {
+            if (beforeMine == null) { AppLog.w("FYT: sensitivity sent, the tuner does not report it"); return }
+            throw RadioException("Seek sensitivity did not change", "It may be at its limit, or automatic sensitivity is on.")
+        }
+        if (learned) return
+        if (mine() == beforeMine && other() != beforeOther) {
+            // The other band moved: undo it and use the other index.
+            bits = bits or 1
+            AppLog.i("FYT: sensitivity band index is swapped on this unit – correcting")
+            send((bits xor 1) xor 2); waitFor(1200) { other() == beforeOther }   // same band as before, other way
+            send(bits); waitFor(1500) { mine() != beforeMine }
+        }
+        val now = mine(); val was = beforeMine
+        if (now != null && was != null && now != was && ((now > was) != up)) {
+            bits = bits or 2
+            AppLog.i("FYT: sensitivity direction is swapped on this unit – correcting")
+            send(bits); waitFor(1200) { mine() == was }   // back to where it was …
+            send(bits); waitFor(1500) { mine() != was }   // … then the intended way
+        }
+        host.prefs.fytSensMap = bits
+        AppLog.i("FYT: sensitivity mapping learned ($bits): ${if (fm) "FM" else "AM"} now ${mine()}")
     }
 
     /**
@@ -346,6 +456,9 @@ class FytMcuBackend : RadioBackend {
             out += "tune ${v.label} -> ${if (waitFor(2500) { abs(reportedKhz - target) < 5 }) "WORKS" else "no (at $reportedKhz, from $before)"}"
         }
         out += "Next channel cmd(0,[0]) -> " + run { val b = reportedKhz; expect(3000); radio!!.cmd(Syu.C_NEXT_CHANNEL, intArrayOf(0)); if (waitFor(2000) { reportedKhz != b }) "MOVED to $reportedKhz" else "no change" }
+        val st = host.state
+        out += "Tuner: region=${st.region?.let { Syu.AREAS.getOrNull(it) ?: it } ?: "not reported"}, ${st.bandInfo?.describe() ?: "no band info"}, " +
+            "sensFm=${st.sensFm} sensAm=${st.sensAm}, opts=${st.opts.entries.joinToString { "${it.key}=${if (it.value) "on" else "off"}" }.ifEmpty { "none reported" }}"
         out.forEach { AppLog.i("Learn: $it") }
         // Save the first format of each kind that worked.
         stepVariants(true).indexOfFirst { v -> out.any { it.startsWith("step up ${v.label} -> MOVED") } }.takeIf { it >= 0 }?.let { host.prefs.setFytVariant("step", it) }
