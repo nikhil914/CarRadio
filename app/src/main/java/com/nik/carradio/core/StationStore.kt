@@ -78,7 +78,7 @@ object StationStore {
             d.stations.forEach { s ->
                 put(JSONObject().put("id", s.id).put("band", s.band.name).put("khz", s.freqKhz).put("name", s.name)
                     .put("pi", s.pi).put("fav", s.favourite).put("pos", s.position).put("verified", s.verified)
-                    .put("groups", JSONArray(s.groups.toList())).put("af", JSONArray(s.afKhz)))
+                    .put("groups", JSONArray(s.groups.toList())).put("af", JSONArray(s.afKhz)).put("stream", s.streamUrl))
             }
         })
     }
@@ -92,7 +92,8 @@ object StationStore {
                     j.optString("name"), j.optInt("pi"), j.optBoolean("fav"),
                     j.optJSONArray("groups")?.let { g -> (0 until g.length()).map { g.getString(it) }.toSet() } ?: emptySet(),
                     j.optInt("pos"), j.optBoolean("verified", true),
-                    j.optJSONArray("af")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList())
+                    j.optJSONArray("af")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
+                    j.optString("stream"))
             }
         } ?: emptyList()
         return StationData(stations, groups, o.optString("selectedGroup", StationLogic.ALL),

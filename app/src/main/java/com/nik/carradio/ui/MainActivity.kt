@@ -37,6 +37,13 @@ class MainActivity : ComponentActivity() {
         com.nik.carradio.core.Updater.onResume(this)
     }
 
+    override fun onStart() { super.onStart(); com.nik.carradio.service.FloatingPlayer.onAppShown() }
+    override fun onStop() {
+        super.onStop()
+        // Not when rotating / recreating, only when another app (navigation) comes to the front.
+        if (!isChangingConfigurations) com.nik.carradio.service.FloatingPlayer.onAppHidden(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)

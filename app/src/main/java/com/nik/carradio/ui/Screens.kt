@@ -360,7 +360,11 @@ fun SettingsScreen(onOpen: (SettingsPage) -> Unit = {}) {
         UpdateSettings()
 
         SectionHeader("Stations and backup")
+        LookupSection()
         BackupSection()
+
+        SectionHeader("Floating player and song history")
+        ExtrasSettings()
 
         SectionHeader("Radio key")
         RadioKeySection()

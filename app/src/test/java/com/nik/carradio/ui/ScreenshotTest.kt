@@ -42,7 +42,8 @@ class ScreenshotTest {
         val names = listOf("Radio Mirchi" to 104_800, "City 101.6" to 101_600, "Virgin Radio" to 104_400, "Dubai 92" to 92_000,
             "Hum FM" to 106_500, "Radio Spice" to 105_400, "Emirates Radio" to 100_500, "Big 106.2" to 106_200)
         StationStore.update { d ->
-            d.copy(stations = names.mapIndexed { i, (n, f) -> Station(i + 1L, Band.FM, f, name = n, favourite = i < 6, position = i, verified = true) })
+            d.copy(stations = names.mapIndexed { i, (n, f) -> Station(i + 1L, Band.FM, f, name = n, favourite = i < 6, position = i, verified = true,
+                streamUrl = if (i == 0) "https://example.invalid/mirchi.aac" else "") })
         }
     }
 
@@ -63,4 +64,19 @@ class ScreenshotTest {
     @Config(qualifiers = "w853dp-h480dp-land-hdpi")
     @Test fun stationsHeadUnit() = shot("stations_headunit") { androidx.compose.material3.Surface(color = themeById("ocean").scheme().background) { StationsScreen() } }
 
+
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    @Test fun radioWithSpeed() {
+        com.nik.carradio.core.UiConfig.update { it.copy(mainSpeed = true) }
+        try { shot("radio_headunit_speed") { AppRoot() } } finally { com.nik.carradio.core.UiConfig.update { it.copy(mainSpeed = false) } }
+    }
+
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    @Test fun songHistory() {
+        // Through the controller, the way the tuner reports radio text.
+        listOf("Kesariya – Arijit Singh", "Apna Bana Le – Arijit Singh", "Traffic: slow on Sheikh Zayed Rd").forEach { t ->
+            RadioController.update { it.copy(radioText = t) }
+        }
+        shot("song_history") { SongHistoryDialog {} }
+    }
 }

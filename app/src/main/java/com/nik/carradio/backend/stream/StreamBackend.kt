@@ -23,13 +23,15 @@ class StreamBackend : RadioBackend {
     override val caps = setOf(Cap.STREAM)
 
     private var player: MediaPlayer? = null
+    /** A station's own stream (FM ↔ internet switch); null = the URL from Settings. */
+    @Volatile var stationUrl: String? = null
 
     override suspend fun probe(host: BackendHost): ProbeResult =
         if (host.prefs.streamUrl.isBlank()) ProbeResult(ProbeStatus.UNAVAILABLE, "No stream URL set", "Add one in Settings to use internet radio.")
         else ProbeResult(ProbeStatus.AVAILABLE, "Stream URL set")
 
     override suspend fun powerOn(host: BackendHost, band: Band, khz: Int) {
-        val url = host.prefs.streamUrl
+        val url = stationUrl ?: host.prefs.streamUrl
         if (url.isBlank()) throw RadioException("No stream URL set", "Open Settings and paste an internet radio URL (http/https, MP3/AAC/HLS).")
         powerOff(host)
         val ready = CompletableDeferred<Result<Unit>>()
@@ -51,7 +53,7 @@ class StreamBackend : RadioBackend {
         val r = withTimeoutOrNull(20_000) { ready.await() }
             ?: throw RadioException("Stream did not start within 20 s", "Check the internet connection (hotspot) and the URL.")
         r.getOrThrow()
-        host.update { it.copy(status = "Playing internet stream", stationName = url.substringAfter("://").substringBefore('/')) }
+        host.update { it.copy(status = "Playing internet stream", stationName = if (stationUrl != null) it.stationName else url.substringAfter("://").substringBefore('/')) }
     }
 
     private fun explain(extra: Int) = when (extra) {

@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- In-app updater: hands the downloaded release APK to Android's installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Optional floating mini player over navigation ("Display over other apps"). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Optional GPS speedometer in full screen; GPS is on only while full screen is shown. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -39,12 +41,14 @@
         </intent>
     </queries>
 
+    <!-- Cleartext: many internet radio streams and station logos are plain http://. Nothing private is sent. -->
     <application
         android:name=".App"
         android:allowBackup="false"
         android:icon="@drawable/ic_radio"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.CarRadio"
         tools:targetApi="34">
 

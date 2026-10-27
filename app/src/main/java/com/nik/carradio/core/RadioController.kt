@@ -55,7 +55,11 @@ object RadioController : BackendHost {
     private var active: RadioBackend? = null
     private var initialized = false
 
-    override fun update(transform: (RadioState) -> RadioState) = _state.update(transform)
+    override fun update(transform: (RadioState) -> RadioState) {
+        var old: RadioState? = null
+        _state.update { o -> old = o; transform(o) }
+        old?.let { o -> val n = _state.value; if (n.radioText != o.radioText && n.radioText.isNotBlank()) SongHistory.onState(o, n) }
+    }
 
     fun backend(id: String?) = backends.firstOrNull { it.id == id }
 
@@ -206,7 +210,8 @@ object RadioController : BackendHost {
             }
             if (ok) {
                 prefs.clearStrikes(b.id)
-                if (!b.caps.contains(Cap.EXTERNAL_UI)) { prefs.lastWorking = b.id; prefs.wasPlaying = true }
+                val temporary = b.id == "stream" && (b as StreamBackend).stationUrl != null
+                if (!b.caps.contains(Cap.EXTERNAL_UI) && !temporary) { prefs.lastWorking = b.id; prefs.wasPlaying = true }
                 update { it.copy(powered = true, error = null) }
                 if (b.caps.contains(Cap.EXTERNAL_UI)) update { it.copy(powered = false) } else RadioService.start(app)
                 return
@@ -298,6 +303,7 @@ object RadioController : BackendHost {
             else setError(UiError("No saved stations yet", "Run Scan, or tap \"+ Save\" on a station you like.", "", null))
             return
         }
+        if (state.onlineStation != null) { AppLog.i("Station ${if (up) "next" else "previous"} (online) -> ${next.label()}"); playStation(next); return }
         pendingStep = next.band to next.freqKhz
         AppLog.i("Station ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
         val target = next.band to next.freqKhz
@@ -335,7 +341,42 @@ object RadioController : BackendHost {
         if (_probes.value.isEmpty()) startup(forceStart = true) else powerOn()
     }
 
-    fun playStation(s: Station) = tune(s.freqKhz, s.band)
+    fun playStation(s: Station) {
+        // While a station plays over the internet, the list keeps using the internet if it can.
+        if (state.onlineStation != null) { if (s.streamUrl.isNotBlank()) listenOnline(s) else backToFm(s); return }
+        tune(s.freqKhz, s.band)
+    }
+
+    // ------------------------------------------------------------------ FM ↔ internet
+
+    /** The tuner method to return to after listening online. */
+    @Volatile private var fmBackend: RadioBackend? = null
+
+    /** Plays [st]'s internet stream instead of FM (weak signal, out of range). */
+    fun listenOnline(st: Station) = scope.launch {
+        if (st.streamUrl.isBlank()) { setError(UiError("No internet stream for ${st.label()}", "Settings → Stations → Find logos and streams online, or long-press the station and paste a stream URL.", "", null)); return@launch }
+        val stream = backends.first { it.id == "stream" } as StreamBackend
+        if (active?.id != "stream") fmBackend = active
+        stream.stationUrl = st.streamUrl
+        AppLog.i("Listen online: ${st.label()} -> ${st.streamUrl}")
+        if (active?.id == "stream" && state.powered) runCatching { stream.powerOff(this@RadioController) }
+        selectInternal(stream, persist = false)
+        update { it.copy(stationName = st.name, radioText = "", freqKhz = st.freqKhz, band = st.band, onlineStation = st.id) }
+        powerOnInternal(autoFallback = false)
+        if (!state.powered) { update { it.copy(onlineStation = null) }; fmBackend?.let { fm -> selectInternal(fm, persist = false); powerOnInternal(autoFallback = false) } }
+    }
+
+    /** Back to the tuner, on [st] or the station that was playing online. */
+    fun backToFm(st: Station? = null) = scope.launch {
+        val fm = fmBackend ?: backends.firstOrNull { it.id == prefs.lastWorking } ?: return@launch
+        val target = st ?: StationStore.data.value.stations.firstOrNull { it.id == state.onlineStation }
+        (backends.first { it.id == "stream" } as StreamBackend).stationUrl = null
+        update { it.copy(onlineStation = null) }
+        selectInternal(fm, persist = false)
+        if (target != null) { prefs.lastBand = target.band; prefs.setLastFreq(target.band, target.freqKhz) }
+        powerOnInternal(autoFallback = false)
+        AppLog.i("Back to FM${target?.let { ": ${it.label()}" } ?: ""}")
+    }
 
     /** Double-tap on a station: move to its next alternative frequency (weak signal on the road). */
     fun cycleAf(s: Station) {

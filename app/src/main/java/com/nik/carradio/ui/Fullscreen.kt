@@ -113,10 +113,10 @@ private fun Clock(modifier: Modifier) {
     Text(now, fontSize = 40.sp, fontWeight = FontWeight.SemiBold, color = Grey, modifier = modifier)
 }
 
-/** GPS speed. Location updates run only while this is on screen, once per second. */
+/** GPS speed in km/h (null = no fix yet) and a status text. Location updates run only while composed. */
 @SuppressLint("MissingPermission")
 @Composable
-private fun Speedometer(modifier: Modifier) {
+internal fun rememberGpsSpeed(): Pair<Int?, String> {
     val ctx = LocalContext.current
     val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     var kmh by remember { mutableStateOf<Int?>(null) }
@@ -133,10 +133,26 @@ private fun Speedometer(modifier: Modifier) {
             .onFailure { status = "No GPS on this unit" }.isSuccess
         onDispose { if (ok) runCatching { lm.removeUpdates(l) } }
     }
+    return kmh to status
+}
+
+@Composable
+private fun Speedometer(modifier: Modifier) {
+    val (kmh, status) = rememberGpsSpeed()
     Row(modifier, verticalAlignment = Alignment.Bottom) {
         Text(kmh?.toString() ?: "--", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Grey)
         Spacer(Modifier.width(6.dp))
         Text(if (status.isNotEmpty() && kmh == null) status else "km/h", fontSize = 16.sp, color = Grey, modifier = Modifier.padding(bottom = 8.dp))
+    }
+}
+
+/** Speed for the Radio screen: big number over "km/h", same weight as the frequency. */
+@Composable
+internal fun SpeedPanel(modifier: Modifier = Modifier) {
+    val (kmh, status) = rememberGpsSpeed()
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(kmh?.toString() ?: "--", fontSize = 64.sp, fontWeight = FontWeight.Light, color = MaterialTheme.colorScheme.onSurface, lineHeight = 64.sp)
+        Text(if (status.isNotEmpty() && kmh == null) status else "km/h", fontSize = 15.sp, color = Grey, maxLines = 1)
     }
 }
 

@@ -109,17 +109,21 @@ fun AppearanceSettings() {
         Text("Clock in full screen", modifier = Modifier.weight(1f))
         Switch(checked = ui.fullscreenClock, onCheckedChange = { v -> UiConfig.update { it.copy(fullscreenClock = v) } })
     }
-    Text("Speedometer in full screen (GPS, on only while full screen is shown)", fontSize = 14.sp)
+    Text("Speedometer", fontWeight = FontWeight.Bold)
+    Text("GPS speed in km/h. The GPS runs only while a screen that shows it is open.", color = Grey, fontSize = 13.sp)
+    // Which switch asked for the permission, so the result turns on the right one.
+    var askFor by remember { mutableStateOf("") }
     val perm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        UiConfig.update { it.copy(fullscreenSpeed = ok) }
-        if (!ok) importMsg = "Location permission denied – speedometer stays off"
+        if (ok) UiConfig.update { if (askFor == "main") it.copy(mainSpeed = true) else it.copy(fullscreenSpeed = true) }
+        else importMsg = "Location permission denied – speedometer stays off"
     }
-    SwitchRow("Show speed (km/h)", ui.fullscreenSpeed) { on ->
-        if (!on) UiConfig.update { it.copy(fullscreenSpeed = false) }
-        else if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)
-            UiConfig.update { it.copy(fullscreenSpeed = true) }
-        else perm.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+    fun speedSwitch(key: String, on: Boolean, set: (Boolean) -> Unit) {
+        if (!on) set(false)
+        else if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) set(true)
+        else { askFor = key; perm.launch(android.Manifest.permission.ACCESS_FINE_LOCATION) }
     }
+    SwitchRow("Show speed on the Radio screen", ui.mainSpeed) { on -> speedSwitch("main", on) { v -> UiConfig.update { it.copy(mainSpeed = v) } } }
+    SwitchRow("Show speed in full screen", ui.fullscreenSpeed) { on -> speedSwitch("fs", on) { v -> UiConfig.update { it.copy(fullscreenSpeed = v) } } }
 }
 
 /** Night theme switching: off, always, by time, sunset–sunrise (Abu Dhabi), headlights (FYT). */

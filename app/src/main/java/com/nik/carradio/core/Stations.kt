@@ -20,6 +20,8 @@ data class Station(
     val verified: Boolean = true,
     /** Alternative frequencies of the same programme (other transmitters), FM kHz. */
     val afKhz: List<Int> = emptyList(),
+    /** Internet stream of the same station (http/https), "" = none. */
+    val streamUrl: String = "",
 ) {
     fun label(): String = name.ifBlank { Freq.format(band, freqKhz) }
     /** True if [khz] is this station's main frequency or one of its AFs. */

@@ -66,6 +66,8 @@ data class RadioState(
     /** Seek sensitivity level per band as reported by the tuner. */
     val sensFm: Int? = null,
     val sensAm: Int? = null,
+    /** Station id playing over the internet instead of FM (FM ↔ internet switch); null = normal. */
+    val onlineStation: Long? = null,
     val scanning: Boolean = false,
     val muted: Boolean = false,
     val status: String = "Starting…",

@@ -19,6 +19,7 @@ class App : Application() {
         RadioController.init(this)
         StationStore.load(this, RadioController.prefs)
         com.nik.carradio.core.UiConfig.init(this)
+        com.nik.carradio.core.SongHistory.init(this)
         com.nik.carradio.ui.LogoStore.init(this)
         com.nik.carradio.service.Widgets.start(this)
         com.nik.carradio.core.Updater.autoCheck(this)
