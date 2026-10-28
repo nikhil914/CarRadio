@@ -244,6 +244,7 @@ fun DiagnosticsScreen() {
     LaunchedEffect(Unit) { if (RadioController.needsFullProbe()) RadioController.probeAll() }
     if (sending) SendReportDialog { sending = false }
     LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { FullTestCard() }
         item {
             FlowRowCompat {
                 Button(onClick = { sending = true }) { Text("Send report") }
@@ -374,7 +375,7 @@ fun SettingsScreen(onOpen: (SettingsPage) -> Unit = {}) {
         Button(onClick = { prefs.streamUrl = url; AppLog.i("Stream URL saved"); RadioController.probeAll() }) { Text("Save URL") }
 
         SectionHeader("Reports")
-        Text("GitHub upload: paste a fine-grained token with \"Issues: Read and write\" on the repo below. It stays on this unit only and is never put in backups.", color = Grey, fontSize = 13.sp)
+        Text("GitHub upload: paste a fine-grained token with \"Issues: Read and write\" on the repo below (add \"Contents: Read and write\" only if you want to upload firmware files from Diagnostics). It stays on this unit only and is never put in backups.", color = Grey, fontSize = 13.sp)
         OutlinedTextField(repo, { repo = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Repository (owner/name)") })
         OutlinedTextField(token, { token = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Token") },
             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())

@@ -515,6 +515,7 @@ object RadioController : BackendHost {
     // ------------------------------------------------------------------ plumbing
 
     private fun command(label: String, onFail: () -> Unit = {}, block: suspend (RadioBackend) -> Unit) = scope.launch {
+        if (FullTest.active) { update { it.copy(status = "Full radio test running – controls are paused") }; return@launch }
         val b = active
         if (b == null) { setError(UiError("No radio method selected", "Open Diagnostics and pick one.", "", null)); return@launch }
         if (!state.powered && b.caps.contains(Cap.TUNE)) {

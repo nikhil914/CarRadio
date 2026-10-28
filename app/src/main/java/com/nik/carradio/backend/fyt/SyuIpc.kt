@@ -136,7 +136,10 @@ object Syu {
         val alive get() = binder.isBinderAlive
     }
 
-    class Module(private val binder: IBinder) {
+    class Module(val binder: IBinder) {
+        /** The interface name the vendor gave this module's binder (diagnostics). */
+        fun descriptor(): String? = runCatching { binder.interfaceDescriptor }.getOrNull()
+
         fun cmd(code: Int, ints: IntArray? = null, flts: FloatArray? = null, strs: Array<String>? = null) {
             val data = Parcel.obtain()
             try {

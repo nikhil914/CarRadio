@@ -123,5 +123,56 @@ object ReportSender {
         } finally { conn?.disconnect() }
     }
 
+    /**
+     * Long text as one issue plus comments (GitHub allows 65,536 characters per body), each part
+     * numbered so the order survives. Used for the full radio test report.
+     */
+    suspend fun fileLongIssue(title: String, text: String): Upload = withContext(Dispatchers.IO) {
+        val prefs = RadioController.prefs
+        val token = prefs.githubToken.trim(); val repo = prefs.githubRepo.trim()
+        if (token.isEmpty()) return@withContext Upload.Failed("No GitHub token saved",
+            "Settings → Reports: paste a fine-grained token with Issues: Read and write on $repo. Or use Share / Save to file.")
+        val parts = text.chunked(60_000)
+        fun body(i: Int) = "Part ${i + 1}/${parts.size}\n```\n${parts[i]}\n```"
+        try {
+            val (code, resp) = post("https://api.github.com/repos/$repo/issues", token, JSONObject().put("title", title).put("body", body(0)))
+            if (code != 201) return@withContext fail(code, resp, repo)
+            val o = JSONObject(resp)
+            val url = o.optString("html_url"); val number = o.optInt("number")
+            for (i in 1 until parts.size) {
+                val (c, r) = post("https://api.github.com/repos/$repo/issues/$number/comments", token, JSONObject().put("body", body(i)))
+                if (c != 201) { AppLog.w("Report part ${i + 1} not uploaded: HTTP $c ${msg(r)}"); return@withContext Upload.Failed("Only ${i} of ${parts.size} parts uploaded (HTTP $c)", "$url – ${msg(r)}") }
+            }
+            AppLog.i("Long report uploaded: $url (${parts.size} parts)")
+            Upload.Ok(url)
+        } catch (e: UnknownHostException) {
+            Upload.Failed("No internet on the head unit", "Connect it to your phone's hotspot, then retry. Or use Share / Save to file.")
+        } catch (e: IOException) {
+            Upload.Failed("Upload failed: ${e.javaClass.simpleName}", (e.message ?: "") + " – check the hotspot connection.")
+        }
+    }
+
+    private fun post(url: String, token: String, json: JSONObject): Pair<Int, String> {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 15_000; readTimeout = 30_000; doOutput = true
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        try {
+            conn.outputStream.use { it.write(json.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            return code to ((if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: "")
+        } finally { conn.disconnect() }
+    }
+
+    private fun fail(code: Int, text: String, repo: String): Upload = when (code) {
+        401 -> Upload.Failed("GitHub rejected the token (401)", "The token is wrong or expired. Create a new fine-grained token and paste it again.")
+        403 -> Upload.Failed("Token has no permission (403)", "Give the token \"Issues: Read and write\" on $repo. ${msg(text)}")
+        404 -> Upload.Failed("Repository not found (404)", "Check the name \"$repo\", and that the token is allowed on it.")
+        else -> Upload.Failed("GitHub answered HTTP $code", msg(text))
+    }
+
     private fun msg(body: String) = runCatching { JSONObject(body).optString("message") }.getOrNull().orEmpty().take(200)
 }
