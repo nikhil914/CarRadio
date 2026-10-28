@@ -13,8 +13,8 @@ android {
         // Head units in the field run Android 6 – 13; 21 keeps even very old units installable.
         minSdk = 21
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.4.0"
+        versionCode = 13
+        versionName = "1.4.1"
     }
 
     signingConfigs {

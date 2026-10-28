@@ -234,6 +234,7 @@ class FytMcuBackend : RadioBackend {
     // checks the tuner really moved, and remembers the one that works on this unit.
 
     private class Variant(val label: String, val send: (Syu.Module) -> Unit)
+    private companion object { const val DIRECT_BROKEN = -2 }
 
     /**
      * Direct tune. From com.syu.ms (radio module command 13 → setFreq(mode, value) of the MCU
@@ -291,29 +292,88 @@ class FytMcuBackend : RadioBackend {
         return null
     }
 
+    /** Tunes since direct tuning was found not to work here; it is retried every 10th tune. */
+    private var tunesSinceDirectFailed = 0
+    private var bandInfoAsked = false
+
     override suspend fun tune(host: BackendHost, band: Band, khz: Int) {
         ensure(host)
         val target = Freq.clamp(band, khz)
         if (currentBand() != null && currentBand() != band) setBand(host, band)
         if (abs(reportedKhz - target) < 5) return
-        commanded = target to System.currentTimeMillis()
-        if (runLearning(host, "tune", tuneVariants(band, target), 2500) { abs(reportedKhz - target) < 5 } != null) return
-        // No direct format works: walk there with steps (needs a working step format).
         if (reportedKhz <= 0) {
             throw RadioException("Tuner does not report its frequency", "The radio module accepted commands but never reported back. Open the stock radio once, then retry.")
         }
-        val stepKhz = host.prefs.step(band)
+        commanded = target to System.currentTimeMillis()
+
+        // 1) Direct. Mode 1 needs the band limits, which com.syu.ms only has after the MCU sent
+        //    its band-range packet; selecting the band asks the MCU for it (update 16 = arrived).
+        if (host.state.bandInfo == null && !bandInfoAsked) {
+            bandInfoAsked = true
+            AppLog.i("FYT: no band limits yet – selecting ${band.name} to make the MCU send them")
+            expect(3000)
+            radio!!.cmd(Syu.C_BAND, intArrayOf(if (band == Band.FM) Syu.BAND_SWITCH_FM else Syu.BAND_SWITCH_AM))
+            AppLog.i("FYT: band limits ${if (waitFor(1500) { host.state.bandInfo != null }) "received: ${host.state.bandInfo?.describe()}" else "not reported"}")
+            if (abs(reportedKhz - target) < 5) return
+        }
+        val directKnownBroken = host.prefs.fytVariant("tune") == DIRECT_BROKEN
+        if (!directKnownBroken || ++tunesSinceDirectFailed % 10 == 0) {
+            val ok = runLearning(host, "tune", tuneVariants(band, target), 2500) { abs(reportedKhz - target) < 5 } != null
+            if (ok) { tunesSinceDirectFailed = 0; return }
+            host.prefs.setFytVariant("tune", DIRECT_BROKEN)
+            AppLog.w("FYT: no direct-tune format works on this unit – seeking and stepping instead (direct retried every 10th tune)")
+        }
+
+        // 2) Seek toward it: saved stations are real stations, so seek stops on or near them.
+        //    A few seeks replace hundreds of 50 kHz steps (each needs the MCU's ~0.6 s report).
+        // cmd(5/6,[0]) is the FYT launcher's own format; used until seek has been learned.
+        val seekLearned = host.prefs.fytVariant("seek").coerceAtLeast(0)
+        if (abs(reportedKhz - target) > 300) {
+            val up = target > reportedKhz
+            var seeks = 0
+            while (seeks < 25) {
+                val before = reportedKhz
+                expect(9000)
+                seekVariants(up)[seekLearned].send(radio!!)
+                if (!waitSettledReport(before, 7000)) break
+                seeks++
+                val now = reportedKhz
+                if (abs(now - target) < 5) { AppLog.i("FYT: reached $now kHz by seeking ($seeks seeks)"); return }
+                if ((up && now > target) || (!up && now < target) || (up && now < before) || (!up && now > before)) break  // passed it or wrapped
+            }
+            AppLog.i("FYT: seek stopped at $reportedKhz kHz after $seeks seeks, stepping the rest")
+        }
+
+        // 3) Step the rest, by the tuner's own step (Europe: 50 kHz) measured from the first step.
+        var stepKhz = host.state.bandInfo?.stepKhz?.takeIf { it > 0 } ?: 0
         var guard = 0
-        while (abs(reportedKhz - target) >= stepKhz && guard < 400) {
+        while (abs(reportedKhz - target) >= 5 && guard < 400) {
             val before = reportedKhz
             val up = target > reportedKhz
-            val ok = if (guard == 0) runLearning(host, "step", stepVariants(up), 2000) { reportedKhz != before } != null
-                else { expect(); stepVariants(up)[host.prefs.fytVariant("step").coerceAtLeast(0)].send(radio!!); waitFor(2000) { reportedKhz != before } }
+            if (stepKhz > 0 && abs(target - before) < stepKhz) break
+            val ok = if (host.prefs.fytVariant("step") < 0) runLearning(host, "step", stepVariants(up), 2000) { reportedKhz != before } != null
+                else { expect(); stepVariants(up)[host.prefs.fytVariant("step")].send(radio!!); waitFor(2000) { reportedKhz != before } }
             if (!ok) throw RadioException("The tuner ignores tuning commands from Car Radio",
-                "It plays ${Freq.format(band, reportedKhz)}. Run Diagnostics → Learn tuner commands and send the report.")
+                "It plays ${Freq.format(band, reportedKhz)}. Run Settings → Advanced → Diagnostics → Learn tuner commands and send the report.")
+            if (stepKhz == 0) stepKhz = abs(reportedKhz - before)
+            if ((up && reportedKhz > target) || (!up && reportedKhz < target)) break   // between two steps
             guard++
         }
-        AppLog.i("FYT: reached $reportedKhz kHz by stepping ($guard steps)")
+        AppLog.i("FYT: reached $reportedKhz kHz by stepping ($guard steps of $stepKhz kHz)")
+        if (abs(reportedKhz - target) >= 5) host.update { it.copy(status = "Nearest the tuner allows: ${Freq.format(band, reportedKhz)}") }
+    }
+
+    /** After a seek: the frequency moved away from [from] and then held still for 700 ms. */
+    private suspend fun waitSettledReport(from: Int, ms: Long): Boolean {
+        if (!waitFor(ms) { reportedKhz != from }) return false
+        var seen = reportedKhz; var since = System.currentTimeMillis()
+        val end = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < end) {
+            delay(100)
+            if (reportedKhz != seen) { seen = reportedKhz; since = System.currentTimeMillis() }
+            else if (System.currentTimeMillis() - since >= 700) return true
+        }
+        return true
     }
 
     override suspend fun seek(host: BackendHost, up: Boolean) {
