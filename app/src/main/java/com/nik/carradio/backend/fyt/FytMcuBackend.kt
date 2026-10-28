@@ -5,6 +5,7 @@ import com.nik.carradio.backend.RadioBackend
 import com.nik.carradio.core.AppLog
 import com.nik.carradio.core.Band
 import com.nik.carradio.core.Cap
+import com.nik.carradio.core.DeviceInfo
 import com.nik.carradio.core.Freq
 import com.nik.carradio.core.ProbeResult
 import com.nik.carradio.core.ProbeStatus
@@ -171,6 +172,7 @@ class FytMcuBackend : RadioBackend {
      * instead. Without key evidence (someone used the stock radio) it is left alone.
      */
     private fun onVendorTune(h: BackendHost, fromKhz: Int, toKhz: Int) {
+        if (com.nik.carradio.core.FullTest.active) return
         val key = lastSteer?.takeIf { System.currentTimeMillis() - it.second < 2500 }
         if (key == null) {
             unexplained = fromKhz to System.currentTimeMillis()
@@ -316,6 +318,19 @@ class FytMcuBackend : RadioBackend {
             AppLog.i("FYT: band limits ${if (waitFor(1500) { host.state.bandInfo != null }) "received: ${host.state.bandInfo?.describe()}" else "not reported"}")
             if (abs(reportedKhz - target) < 5) return
         }
+        // 0) The format the full radio test found on this unit, if any.
+        com.nik.carradio.core.TuneSpec.decode(host.prefs.fytTuneSpec)?.let { spec ->
+            if (spec.claimSource || DeviceInfo.prop("sys.app_id").let { it.isNotEmpty() && it != "1" }) claimSourceQuick()
+            val bi = host.state.bandInfo
+            val r = spec.render(band, target, bi?.minKhz ?: if (band == Band.FM) 87_500 else 522, bi?.maxKhz ?: if (band == Band.FM) 108_000 else 1620, bi?.stepKhz ?: if (band == Band.FM) 50 else 9)
+            expect(4000)
+            radio!!.cmd(spec.code, r.ints, r.floats, r.strings?.let { a -> Array(a.size) { a[it] } })
+            if (waitFor(2500) { abs(reportedKhz - target) < 5 }) { AppLog.i("FYT: tuned with the tested format ${spec.label()}"); return }
+            AppLog.w("FYT: tested format ${spec.label()} did not reach $target – trying the others")
+        }
+        // On SoC-FM units (sys.fyt.radio_type 3/4) com.syu.ms drops set-frequency unless the
+        // radio is the active source (sys.app_id = 1); step and seek have no such check.
+        if (DeviceInfo.prop("sys.app_id").let { it.isNotEmpty() && it != "1" }) claimSourceQuick()
         val directKnownBroken = host.prefs.fytVariant("tune") == DIRECT_BROKEN
         if (!directKnownBroken || ++tunesSinceDirectFailed % 10 == 0) {
             val ok = runLearning(host, "tune", tuneVariants(band, target), 2500) { abs(reportedKhz - target) < 5 } != null
@@ -361,6 +376,12 @@ class FytMcuBackend : RadioBackend {
         }
         AppLog.i("FYT: reached $reportedKhz kHz by stepping ($guard steps of $stepKhz kHz)")
         if (abs(reportedKhz - target) >= 5) host.update { it.copy(status = "Nearest the tuner allows: ${Freq.format(band, reportedKhz)}") }
+    }
+
+    private suspend fun claimSourceQuick() {
+        AppLog.i("FYT: sys.app_id=${DeviceInfo.prop("sys.app_id")} – claiming the radio source before tuning")
+        main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
+        waitFor(1200) { DeviceInfo.prop("sys.app_id") == "1" }
     }
 
     /** After a seek: the frequency moved away from [from] and then held still for 700 ms. */

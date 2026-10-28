@@ -68,3 +68,29 @@ Other MCU keys: 17/16 step up/down, 6/5 seek up/down, 10/9 next/previous preset.
 | 2 | Europe | 87.5–108 MHz, 50 kHz | 522–1620, 9 kHz |
 | 3 | Russia | FM1 65–74 MHz (OIRT, 30 kHz), FM2/3 87.5–108 MHz, 100 kHz | 522–1620, 9 kHz |
 | 4 | Japan | 76–90 MHz, 100 kHz | 520–1629, 9 kHz |
+
+## Radio implementations and the source gate (decoded for 1.5)
+
+com.syu.ms picks one radio implementation at start-up and publishes it as `sys.fyt.radio_type`
+(2021 UIS7862 build, `module.k.f.a(I)`; the 2018 build names them `CmdRadio`, `CmdRadioArm`, `CmdRadioInner`):
+
+| radio_type | Class (2021) | Tuner | set-frequency (cmd 13) |
+|---:|---|---|---|
+| 1 | `module.k.a` | MCU tuner | modes 0–3; mode 3 = direct MCU packet `25 hi lo` |
+| 2 | `module.k.h` | none | ignored |
+| 3 | `module.k.c` | SoC FM chip, run by the stock radio app | **mode 1 only, only while `sys.app_id` = 1**; forwarded as update 28 `[13, value]` |
+| 4 | `module.k.b` | SoC FM chip (variant) | same as 3 |
+
+On types 3/4 every command is forwarded to the stock radio app on **update code 28**: step up `[3]`,
+step down `[4]`, seek `[5]`/`[6]`, select preset `[7, n]`, search `[22]`, set frequency `[13, value]`.
+Step and seek have no source check; set-frequency does (`module.i.e.E`, mirrored in `sys.app_id`).
+That matches a unit where stepping works and direct tuning is silently ignored.
+
+The full radio test (Diagnostics) reads both properties, registers for update 28 to see what is
+forwarded, and tries every format and unit, with and without claiming the source and with the
+stock radio app open.
+
+Other references checked: FYT launcher `FinalRadio` constants; the Dudu7 (UIS7870) client in
+headunit_landscape (tuner driven through FmService/libfmjni, Syu used for the source); Radio+
+(edman01/radio-plus-open: Junsun/HCN/NWD/TS/SPD/Reglink stacks, explicitly not FYT); HiDefRadio
+(RTL-SDR USB dongles, not head-unit tuners).

@@ -68,6 +68,11 @@ class Prefs(context: Context) {
     fun setFytVariant(op: String, v: Int) = sp.edit().putInt("fyt_v2_$op", v).apply()
     fun clearFytVariants() = sp.edit().remove("fyt_v2_tune").remove("fyt_v2_step").remove("fyt_v2_seek").remove("fyt_sens_map").apply()
 
+    /** Tune command format found by the full radio test ([TuneSpec] encoded); null = none. */
+    var fytTuneSpec: String?
+        get() = sp.getString("fyt_tune_spec", null)
+        set(v) = sp.edit().putString("fyt_tune_spec", v).apply()
+
     /** FYT sensitivity command mapping learned on first use; -1 = not learned. */
     var fytSensMap: Int
         get() = sp.getInt("fyt_sens_map", -1)
