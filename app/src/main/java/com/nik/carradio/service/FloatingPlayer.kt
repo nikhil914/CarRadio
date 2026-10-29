@@ -56,6 +56,7 @@ object FloatingPlayer {
 
     /** MainActivity went to the background. */
     fun onAppHidden(ctx: Context) {
+        if (com.nik.carradio.backend.fyt.StockRadio.waking) return
         if (!UiConfig.settings.value.floatingPlayer || dismissed || !RadioController.state.powered) return
         if (!canDraw(ctx)) { AppLog.w("Floating player: \"Display over other apps\" is not allowed"); return }
         show(ctx.applicationContext)

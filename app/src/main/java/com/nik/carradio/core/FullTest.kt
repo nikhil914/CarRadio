@@ -169,7 +169,8 @@ object FullTest {
         }
 
         private val radioCb = Syu.Callback { code, ints, f, s ->
-            if (code == Syu.U_FREQ) ints?.firstOrNull()?.let { v -> Freq.decodeInt(v)?.let { freq = it; band = Freq.bandOf(it) } }
+            // On FM, a value below 64 MHz is com.syu.ms's placeholder (stock radio app not reporting).
+            if (code == Syu.U_FREQ) ints?.firstOrNull()?.let { v -> Freq.decodeInt(v)?.let { if (it >= 64_000) { freq = it; band = Freq.bandOf(it) } } }
             if (code == Syu.U_EXTRA_FREQ_INFO) Syu.bandInfo(ints)?.let { bandInfo = it }
             if (code == 28) forwarded += System.currentTimeMillis() to fmt(code, ints, f, s)
             note("radio", code, ints, f, s)
@@ -227,7 +228,6 @@ object FullTest {
         /** Sends [spec] towards a fresh target and classifies what the tuner did. */
         suspend fun tryTune(spec: TuneSpec, note: String = "") {
             val m = radio ?: error("not connected")
-            if (freq <= 0) { log(Outcome.SKIP, "${spec.label()}: tuner reports no frequency"); return }
             if (spec.claimSource) claimSource()
             val from = freq; val to = target()
             val bi = bandInfo
@@ -237,7 +237,8 @@ object FullTest {
             m.cmd(spec.code, r.ints, r.floats, r.strings?.let { a -> Array(a.size) { a[it] } })
             val ok = waitFor(3500) { near(freq, to) }
             val fw = forwardedSince(t)
-            val where = when { ok -> "reached ${Freq.format(Band.FM, freq)}"; freq != from -> "moved to ${Freq.format(Band.FM, freq)} (wanted ${Freq.format(Band.FM, to)})"; else -> "no change" }
+            val where = when { ok -> "reached ${Freq.format(Band.FM, freq)}"; freq != from -> "moved to ${Freq.format(Band.FM, freq)} (wanted ${Freq.format(Band.FM, to)})"
+                freq <= 0 -> "no frequency reported (stock radio app not running?)"; else -> "no change" }
             if (ok) tuneWins += spec
             log(if (ok) Outcome.PASS else Outcome.FAIL, "tune ${spec.label()}$note: $where · app_id=$id0 · forwarded=$fw")
         }
@@ -355,6 +356,17 @@ object FullTest {
             TuneSpec(13, "1,{v10}", claimSource = true), TuneSpec(13, "1,{khz}", claimSource = true), TuneSpec(13, "3,{v10}", claimSource = true),
         )
         matrix.forEachIndexed { i, spec -> step("tune.$i", "Direct tune", "Tune ${spec.label()}") { tryTune(spec) } }
+
+        // E0. SoC-FM: does starting the stock app's exported service (no screen) make it answer?
+        step("stock.service", "Stock radio app", "Start the stock radio service (no screen)") {
+            val pkg = com.nik.carradio.backend.fyt.StockRadio.pkg(ctx) ?: run { log(Outcome.SKIP, "no stock radio app"); return@step }
+            val was = freq
+            val ok = com.nik.carradio.backend.fyt.StockRadio.startService(ctx, pkg)
+            claimSource(); pause(2500)
+            val reported = freq > 0 && freq != was
+            log(Outcome.INFO, "startService ${com.nik.carradio.backend.fyt.StockRadio.SERVICE}: ${if (ok) "accepted" else "refused"} · frequency ${if (reported) "now reported: ${Freq.format(Band.FM, freq)}" else "still not reported"}")
+            if (freq > 0) tryTune(TuneSpec(13, "1,{v10}"), " after starting the service only")
+        }
 
         // E. With the stock radio app in front (SoC-FM units: it executes the forwarded commands).
         step("stock.open", "Stock radio app", "Open the stock radio app") {

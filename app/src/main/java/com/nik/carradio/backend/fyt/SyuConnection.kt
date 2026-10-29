@@ -26,6 +26,9 @@ object SyuConnection {
 
     fun current(): Syu.Toolkit? = toolkit?.takeIf { it.alive }
 
+    /** Tests: a simulated com.syu.ms toolkit instead of binding to the real one. */
+    internal fun useForTest(t: Syu.Toolkit?) { toolkit = t; connectedTo = if (t != null) "simulated" else null }
+
     fun installedEndpoints(ctx: Context) = Syu.ENDPOINTS.filter { DeviceInfo.isInstalled(ctx, it) }
 
     suspend fun connect(ctx: Context, timeoutMs: Long = 4000): Syu.Toolkit {

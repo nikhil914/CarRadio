@@ -3,6 +3,7 @@ package com.nik.carradio.backend.fyt
 import com.nik.carradio.backend.BackendHost
 import com.nik.carradio.backend.RadioBackend
 import com.nik.carradio.core.AppLog
+import com.nik.carradio.core.AppState
 import com.nik.carradio.core.Band
 import com.nik.carradio.core.Cap
 import com.nik.carradio.core.DeviceInfo
@@ -41,6 +42,45 @@ class FytMcuBackend : RadioBackend {
     @Volatile private var unexplained: Pair<Int, Long>? = null
 
     private fun expect(ms: Long = 2500) { expectUntil = System.currentTimeMillis() + ms }
+
+    /** A real frequency has been reported since connecting (SoC-FM: the stock radio app is alive). */
+    @Volatile private var freqValid = false
+
+    /**
+     * SoC-FM units (sys.fyt.radio_type 3/4): make sure the stock radio app is running, because it
+     * is what executes the commands com.syu.ms forwards. First its exported service (no screen),
+     * then, only while Car Radio is on screen, its activity for a moment. Remembers what worked.
+     */
+    private suspend fun ensureExecutor(h: BackendHost, why: String): Boolean {
+        if (!StockRadio.socFm() || freqValid) return true
+        val ctx = h.context
+        val pkg = StockRadio.pkg(ctx) ?: run { AppLog.w("FYT: SoC-FM unit but no stock radio app found"); return false }
+        AppLog.step("FYT: stock radio app not reporting ($why) – starting $pkg")
+        val order = if (h.prefs.fytWake == "activity") listOf("activity", "service") else listOf("service", "activity")
+        for (method in order) {
+            if (method == "activity" && (!AppState.foreground || !h.prefs.allowStockFlash)) {
+                AppLog.i("FYT: not opening the stock radio screen (${if (!AppState.foreground) "Car Radio is not in front" else "disabled in Settings"})"); continue
+            }
+            StockRadio.waking = true
+            try {
+                val started = if (method == "service") StockRadio.startService(ctx, pkg) else StockRadio.openActivity(ctx, pkg)
+                if (!started) continue
+                main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
+                // Nudge: ask for the last station; an alive stock app answers with a frequency.
+                val last = h.prefs.lastFreq(Band.FM).let { if (it in 87_500..108_000) it else 98_100 }
+                var alive = waitFor(1500) { freqValid }
+                if (!alive) { expect(4000); radio?.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, last / 10)); alive = waitFor(3000) { freqValid } }
+                if (method == "activity") { StockRadio.bringCarRadioBack(ctx); delay(400) }
+                if (alive) {
+                    if (h.prefs.fytWake != method) h.prefs.fytWake = method
+                    AppLog.i("FYT: stock radio app is running (started by its $method), tuner at $reportedKhz kHz")
+                    return true
+                }
+                AppLog.w("FYT: starting the stock radio by its $method gave no frequency report")
+            } finally { StockRadio.waking = false }
+        }
+        return false
+    }
 
     /** Last frequency we asked for and when: (kHz, time). */
     @Volatile private var commanded: Pair<Int, Long>? = null
@@ -126,6 +166,13 @@ class FytMcuBackend : RadioBackend {
             Syu.U_FREQ -> if (v != null) {
                 val khz = Freq.decodeInt(v)
                 if (khz == null) { AppLog.w("FYT: unknown frequency value $v"); return }
+                // SoC-FM units: before the stock radio app has reported anything, com.syu.ms
+                // holds a placeholder (522) while the band says FM. Not a real frequency.
+                if (reportedBand == Band.FM && khz < 64_000) {
+                    if (freqValid) AppLog.w("FYT: frequency $v while on FM – the stock radio app is not reporting")
+                    freqValid = false; return
+                }
+                freqValid = true
                 val prev = reportedKhz
                 reportedKhz = khz
                 // A slow MCU can report our own target after the expect window: never treat that
@@ -198,6 +245,10 @@ class FytMcuBackend : RadioBackend {
         val confirmed = waitFor(2000) { appId == Syu.APP_ID_RADIO }
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
         host.update { it.copy(status = if (confirmed) "Playing via MCU tuner" else "Radio command sent (source not confirmed)") }
+        if (StockRadio.socFm()) {
+            if (!ensureExecutor(host, "radio on")) host.update { it.copy(status = "The stock radio app is not running – open it once, then come back") }
+            else host.update { it.copy(status = "Playing via the unit's FM chip") }
+        }
         // The radio is on once the MCU plays radio. A tuning problem must not throw the whole
         // method away (1.0.0 fell back to the stock app here): report it and stay on FYT.
         try { tune(host, band, khz) } catch (e: RadioException) {
@@ -300,6 +351,8 @@ class FytMcuBackend : RadioBackend {
 
     override suspend fun tune(host: BackendHost, band: Band, khz: Int) {
         ensure(host)
+        if (!ensureExecutor(host, "tune")) throw RadioException("The stock radio app is not running",
+            "On this unit it drives the FM chip. Open the stock Radio app once, then come back to Car Radio.")
         val target = Freq.clamp(band, khz)
         if (currentBand() != null && currentBand() != band) setBand(host, band)
         if (abs(reportedKhz - target) < 5) return
@@ -310,7 +363,9 @@ class FytMcuBackend : RadioBackend {
 
         // 1) Direct. Mode 1 needs the band limits, which com.syu.ms only has after the MCU sent
         //    its band-range packet; selecting the band asks the MCU for it (update 16 = arrived).
-        if (host.state.bandInfo == null && !bandInfoAsked) {
+        // Not on SoC-FM units: there com.syu.ms forwards the band command as a bare [11], which the
+        // stock radio app may take as "toggle FM/AM".
+        if (host.state.bandInfo == null && !bandInfoAsked && !StockRadio.socFm()) {
             bandInfoAsked = true
             AppLog.i("FYT: no band limits yet – selecting ${band.name} to make the MCU send them")
             expect(3000)
@@ -318,15 +373,26 @@ class FytMcuBackend : RadioBackend {
             AppLog.i("FYT: band limits ${if (waitFor(1500) { host.state.bandInfo != null }) "received: ${host.state.bandInfo?.describe()}" else "not reported"}")
             if (abs(reportedKhz - target) < 5) return
         }
+        // SoC-FM units: com.syu.ms takes set-frequency only as mode 1 with 10 kHz units.
+        val spec0 = com.nik.carradio.core.TuneSpec.decode(host.prefs.fytTuneSpec)
+            ?: if (StockRadio.socFm()) com.nik.carradio.core.TuneSpec(Syu.C_FREQ, "1,{v10}") else null
         // 0) The format the full radio test found on this unit, if any.
-        com.nik.carradio.core.TuneSpec.decode(host.prefs.fytTuneSpec)?.let { spec ->
+        spec0?.let { spec ->
             if (spec.claimSource || DeviceInfo.prop("sys.app_id").let { it.isNotEmpty() && it != "1" }) claimSourceQuick()
             val bi = host.state.bandInfo
             val r = spec.render(band, target, bi?.minKhz ?: if (band == Band.FM) 87_500 else 522, bi?.maxKhz ?: if (band == Band.FM) 108_000 else 1620, bi?.stepKhz ?: if (band == Band.FM) 50 else 9)
             expect(4000)
             radio!!.cmd(spec.code, r.ints, r.floats, r.strings?.let { a -> Array(a.size) { a[it] } })
-            if (waitFor(2500) { abs(reportedKhz - target) < 5 }) { AppLog.i("FYT: tuned with the tested format ${spec.label()}"); return }
-            AppLog.w("FYT: tested format ${spec.label()} did not reach $target – trying the others")
+            if (waitFor(2500) { abs(reportedKhz - target) < 5 }) { AppLog.i("FYT: tuned with ${spec.label()}"); return }
+            if (StockRadio.socFm()) {
+                // No answer: the stock radio app was probably killed. Start it and try once more.
+                freqValid = false
+                if (ensureExecutor(host, "no answer to tune")) {
+                    expect(4000); radio!!.cmd(spec.code, r.ints, r.floats, r.strings?.let { a -> Array(a.size) { a[it] } })
+                    if (waitFor(2500) { abs(reportedKhz - target) < 5 }) { AppLog.i("FYT: tuned with ${spec.label()} after restarting the stock radio"); return }
+                }
+            }
+            AppLog.w("FYT: ${spec.label()} did not reach $target – trying the others")
         }
         // On SoC-FM units (sys.fyt.radio_type 3/4) com.syu.ms drops set-frequency unless the
         // radio is the active source (sys.app_id = 1); step and seek have no such check.
@@ -399,6 +465,7 @@ class FytMcuBackend : RadioBackend {
 
     override suspend fun seek(host: BackendHost, up: Boolean) {
         ensure(host)
+        ensureExecutor(host, "seek")
         val before = reportedKhz
         if (runLearning(host, "seek", seekVariants(up), 4000) { reportedKhz != before } == null)
             throw RadioException("Seek is not accepted by this tuner", "Run Diagnostics → Learn tuner commands and send the report.")
@@ -407,6 +474,7 @@ class FytMcuBackend : RadioBackend {
 
     override suspend fun step(host: BackendHost, up: Boolean) {
         ensure(host)
+        ensureExecutor(host, "step")
         val before = reportedKhz
         if (runLearning(host, "step", stepVariants(up), 2000) { reportedKhz != before } == null) super.step(host, up)
     }
@@ -552,7 +620,7 @@ class FytMcuBackend : RadioBackend {
         radio?.let { r -> Syu.RADIO_UPDATES.forEach { runCatching { r.unregister(radioCb, it) } } }
         main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON); m.unregister(mainCb, Syu.MAIN_U_LAMPLET) } }
         steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
-        radio = null; main = null; steer = null; this.host = null
+        radio = null; main = null; steer = null; this.host = null; freqValid = false
     }
 
     private suspend fun waitFor(ms: Long, cond: () -> Boolean): Boolean {

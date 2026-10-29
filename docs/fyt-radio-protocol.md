@@ -94,3 +94,15 @@ Other references checked: FYT launcher `FinalRadio` constants; the Dudu7 (UIS787
 headunit_landscape (tuner driven through FmService/libfmjni, Syu used for the source); Radio+
 (edman01/radio-plus-open: Junsun/HCN/NWD/TS/SPD/Reglink stacks, explicitly not FYT); HiDefRadio
 (RTL-SDR USB dongles, not head-unit tuners).
+
+## Confirmed on the UIS8141E unit (full radio test, 1.5.0)
+
+`sys.fyt.radio_type=4`, `ro.fyt.platform=813`. Stock radio: `/oem/app/190001002_com.syu.radio` (exported
+`com.syu.broadcast.MyService`, launch `com.syu.radio/.Launch`, own `com.android.fmradio.FmService`).
+
+- With the stock radio app not running, com.syu.ms forwarded every command on update 28 (`[3]`, `[4]`,
+  `[5]`, `[13,9810]`, …) and nothing moved; it reported frequency `522` (placeholder) while the band was FM.
+- With the stock app open, `cmd(13,[1,9810])` was answered with frequency 9810 **7 ms** later.
+  `[1,98100]` landed on 87.5 (out of range, clamped). Commands kept working with the app in the background.
+- The firmware's `libfmjni.so` refuses to load in another app (`JNI_OnLoad` fails), so the chip cannot
+  be driven directly; Car Radio keeps the stock app running and tunes through com.syu.ms.

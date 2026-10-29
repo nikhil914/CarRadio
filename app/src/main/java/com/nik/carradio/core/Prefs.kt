@@ -68,6 +68,16 @@ class Prefs(context: Context) {
     fun setFytVariant(op: String, v: Int) = sp.edit().putInt("fyt_v2_$op", v).apply()
     fun clearFytVariants() = sp.edit().remove("fyt_v2_tune").remove("fyt_v2_step").remove("fyt_v2_seek").remove("fyt_sens_map").apply()
 
+    /** How the stock radio app was last started successfully on SoC-FM units: "service", "activity" or null. */
+    var fytWake: String?
+        get() = sp.getString("fyt_wake", null)
+        set(v) = sp.edit().putString("fyt_wake", v).apply()
+
+    /** May Car Radio open the stock radio app for a moment when its background start is not enough. */
+    var allowStockFlash: Boolean
+        get() = sp.getBoolean("allow_stock_flash", true)
+        set(v) = sp.edit().putBoolean("allow_stock_flash", v).apply()
+
     /** Tune command format found by the full radio test ([TuneSpec] encoded); null = none. */
     var fytTuneSpec: String?
         get() = sp.getString("fyt_tune_spec", null)
