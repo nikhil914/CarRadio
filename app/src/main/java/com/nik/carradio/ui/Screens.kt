@@ -353,6 +353,12 @@ fun SettingsScreen(onOpen: (SettingsPage) -> Unit = {}) {
         SwitchRow("Start radio automatically when the app opens", auto) { auto = it; prefs.autoStart = it }
         SwitchRow("Resume the radio when the unit starts or wakes, if it was playing", resume) { resume = it; prefs.resumeOnStart = it }
         SwitchRow("Steering-wheel next/prev go through my station group", wheel) { wheel = it; prefs.wheelUsesStations = it }
+        if (com.nik.carradio.backend.fyt.StockRadio.socFm()) {
+            var flash by remember { mutableStateOf(prefs.allowStockFlash) }
+            SwitchRow("If needed, open the unit's own Radio app for a moment to start the FM chip", flash) { flash = it; prefs.allowStockFlash = it }
+            Text("On this unit the built-in Radio app drives the FM chip, so Car Radio keeps it running in the background. " +
+                "It first tries without showing it; this switch allows a short flash of its screen when that is not enough.", color = Grey, fontSize = 13.sp)
+        }
 
         SectionHeader("Tuner")
         TunerSettings()

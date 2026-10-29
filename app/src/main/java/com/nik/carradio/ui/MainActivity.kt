@@ -37,9 +37,11 @@ class MainActivity : ComponentActivity() {
         com.nik.carradio.core.Updater.onResume(this)
     }
 
-    override fun onStart() { super.onStart(); com.nik.carradio.service.FloatingPlayer.onAppShown() }
+    override fun onStart() { super.onStart(); com.nik.carradio.core.AppState.foreground = true; com.nik.carradio.service.FloatingPlayer.onAppShown() }
     override fun onStop() {
         super.onStop()
+        com.nik.carradio.core.AppState.foreground = false
+        if (com.nik.carradio.backend.fyt.StockRadio.waking) return   // the stock radio opens for a moment; not "user left"
         // Not when rotating / recreating, only when another app (navigation) comes to the front.
         if (!isChangingConfigurations) com.nik.carradio.service.FloatingPlayer.onAppHidden(this)
     }
