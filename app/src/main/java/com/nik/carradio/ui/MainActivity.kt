@@ -22,6 +22,8 @@ import com.nik.carradio.core.UiConfig
 import com.nik.carradio.core.CarSignals
 import com.nik.carradio.core.DayNight
 import com.nik.carradio.core.UiSettings
+import com.nik.carradio.core.ScreenStyle
+import android.view.KeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +48,18 @@ class MainActivity : ComponentActivity() {
         if (!isChangingConfigurations) com.nik.carradio.service.FloatingPlayer.onAppHidden(this)
     }
 
+    /**
+     * Keys nothing on screen used. Media keys (wheel next/prev/play) are left alone on purpose:
+     * Android hands them to the MediaSession in RadioService, which works in the background too.
+     * Only channel keys, which never reach a media session, are mapped here. D-pad and rotary
+     * keys move the focus (shown as a thick accent ring) and are handled by Compose.
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_CHANNEL_UP -> { RadioController.keyNextPrev(true); true }
+        KeyEvent.KEYCODE_CHANNEL_DOWN -> { RadioController.keyNextPrev(false); true }
+        else -> super.onKeyDown(keyCode, event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -57,10 +71,14 @@ class MainActivity : ComponentActivity() {
             val lights by CarSignals.headlights.collectAsState()
             val night = rememberNight(ui, lights)
             val themeId = if (night) ui.nightThemeId else ui.themeId
-            val scheme = remember(themeId) { themeById(themeId).scheme() }
+            val style = if (night && ui.cruiseAtNight) ScreenStyle.CRUISE else ui.screenStyle
+            // Pure recomposition: the radio service and tuner are never touched by a theme change.
+            val scheme = remember(themeId, style, ui.cruiseTint) {
+                if (style == ScreenStyle.CRUISE) cruiseScheme(ui.cruiseTint) else themeById(themeId).scheme()
+            }
             val density = LocalDensity.current
             // Text size setting scales fonts only, never touch targets.
-            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * ui.textScale)) {
+            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * ui.textScale), LocalScreenStyle provides style) {
                 MaterialTheme(colorScheme = scheme) { AppRoot() }
             }
         }

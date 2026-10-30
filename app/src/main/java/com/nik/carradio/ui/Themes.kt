@@ -34,3 +34,20 @@ fun AppTheme.scheme(): ColorScheme = darkColorScheme(
     onSurfaceVariant = if (id == "nightred") Color(0xFFB71C1C) else Color(0xFFB0BEC5),
     error = Color(0xFFEF5350),
 )
+
+/** Night cruise: pure black (OLED-dark, no glare), one tint for everything, dimmer tint for secondary text. */
+fun cruiseScheme(tint: com.nik.carradio.core.CruiseTint): ColorScheme {
+    val (main, dim) = when (tint) {
+        com.nik.carradio.core.CruiseTint.AMBER -> Color(0xFFFFB300) to Color(0xFF8C6200)
+        com.nik.carradio.core.CruiseTint.CYAN -> Color(0xFF26C6DA) to Color(0xFF14707C)
+        com.nik.carradio.core.CruiseTint.RED -> Color(0xFFE53935) to Color(0xFF7F1D1B)
+    }
+    return darkColorScheme(
+        primary = main, secondary = main, tertiary = main, onPrimary = Color.Black,
+        background = Color.Black, surface = Color.Black, surfaceVariant = Color(0xFF0D0D0D),
+        onBackground = main, onSurface = main, onSurfaceVariant = dim, outline = dim, error = main,
+    )
+}
+
+/** The Radio screen layout in use right now (setting, or Night cruise while it is night). */
+val LocalScreenStyle = androidx.compose.runtime.staticCompositionLocalOf { com.nik.carradio.core.ScreenStyle.CLASSIC }
