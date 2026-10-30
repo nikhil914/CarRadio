@@ -179,12 +179,13 @@ private fun Hero(s: RadioState, modifier: Modifier, showLogo: Boolean, onFullscr
     val c = MaterialTheme.colorScheme
     BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
         val freqSize = when { maxHeight < 220.dp -> 64.sp; maxHeight < 280.dp -> 80.sp; maxWidth < 420.dp -> 80.sp; else -> 104.sp }
+        val logoSize = if (maxHeight < 260.dp) 64.dp else 88.dp
         Column(Modifier.fillMaxWidth()) {
             val name = s.stationName.ifBlank { station?.name.orEmpty() }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (showLogo) {
                     Box(Modifier.combinedClickableCompat(onClick = onFullscreen)) {
-                        StationLogo(station ?: Station(0, s.band, s.freqKhz, name = s.stationName), if (maxHeight < 260.dp) 64.dp else 88.dp)
+                        StationLogo(station ?: Station(0, s.band, s.freqKhz, name = s.stationName), logoSize)
                     }
                     Spacer(Modifier.width(16.dp))
                 }
