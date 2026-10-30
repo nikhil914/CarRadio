@@ -59,7 +59,6 @@ fun AppearanceSettings() {
         }
     }
 
-    SectionHeader("Appearance")
     Text("Station layout", fontWeight = FontWeight.Bold)
     FlowRowCompat { StationLayout.entries.forEach { l -> FilterChip(selected = ui.layout == l, onClick = { UiConfig.update { it.copy(layout = l) } }, label = { Text(l.label) }) } }
     if (ui.layout == StationLayout.GRID) {
@@ -73,7 +72,7 @@ fun AppearanceSettings() {
         StationsView(sample, ui, state.band, state.freqKhz, onClick = {}, onLong = {}, modifier = Modifier.fillMaxWidth())
     }
 
-    Text("Theme", fontWeight = FontWeight.Bold)
+    Text("Colour", fontWeight = FontWeight.Bold)
     FlowRowCompat {
         THEMES.forEach { t ->
             FilterChip(selected = ui.themeId == t.id, onClick = { UiConfig.update { it.copy(themeId = t.id) } },
@@ -131,7 +130,6 @@ fun AppearanceSettings() {
 fun DayNightSettings() {
     val ui by UiConfig.settings.collectAsState()
     val lights by com.nik.carradio.core.CarSignals.headlights.collectAsState()
-    SectionHeader("Day and night")
     FlowRowCompat {
         com.nik.carradio.core.NightMode.entries.forEach { m ->
             FilterChip(selected = ui.nightMode == m, onClick = { UiConfig.update { it.copy(nightMode = m) } }, label = { Text(m.label) })

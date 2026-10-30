@@ -310,6 +310,26 @@ object RadioController : BackendHost {
         tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
     }
 
+    /** Steering-wheel / media next and previous, as chosen in Settings → Keys. */
+    fun keyNextPrev(up: Boolean) {
+        when (prefs.nextPrevKey) {
+            NextPrevKey.STATION -> stationStep(up)
+            NextPrevKey.SEEK -> if (active?.caps?.contains(Cap.SEEK) == true) seek(up) else step(up)
+            NextPrevKey.STEP -> step(up)
+        }
+    }
+
+    /** Play/pause key: radio on/off, or mute/unmute while the radio plays (if the method can mute). */
+    fun keyPlayPause(play: Boolean) {
+        val s = state
+        if (prefs.playKey == PlayKey.MUTE && s.powered && s.caps.contains(Cap.MUTE)) {
+            // The session stays "playing" while muted, so every press arrives as pause: toggle.
+            setMute(if (play) false else !s.muted)
+            return
+        }
+        if (play) powerOn() else powerOff()
+    }
+
     override fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean) {
         if (!prefs.wheelUsesStations) { AppLog.i("Wheel redirect off in Settings – keeping the vendor's station"); return }
         if (_scanProgress.value != null) return

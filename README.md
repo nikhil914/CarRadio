@@ -28,6 +28,17 @@ Built first for an **FYT UIS8141E (SC7731E)** unit (reports "Android 13", really
 - **Persistent log**: every step is written to a file. The Log tab and "Share report" show the full trail, including the step that was running if the app was killed.
 - **Diagnostics tab**: per-method status (WORKS / MAYBE / BLOCKED / NO / CRASHED), with technical details, "Use this", "Test start", device properties, vendor packages, `libfmjni` and `/dev` nodes.
 
+## Screen styles (1.6.0)
+
+- **Three Radio-screen styles**, switched instantly in Settings → Appearance (cards with a small preview). Switching only recomposes the UI: the tuner, the MediaSession service and the audio route are never touched.
+  - **Modern clean** (default): band pill and a quiet top bar (mute, tuner, stations, ⋯, settings), a large frequency that slides up or down as it changes, one line of radio text, a 3×2 pad of 88 dp keys 16 dp apart on the driver's side (station ◀ · on/off · station ▶, seek ◀◀ · ★ · seek ▶▶), and a snapping favourites rail. Enter frequency, Scan, FM/AM, Tuner, Listen online and Full screen sit behind ⋯.
+  - **Classic dense**: the 1.3–1.5 screen with every control exposed.
+  - **Night cruise**: pure black, one tint (amber, cyan or red), name, frequency, one dim line of radio text and three outlined keys (hold = seek). By default it takes over at night (the Day and night setting decides when).
+- **Driver position:** left- or right-hand drive puts Modern clean's pad on the driver's side.
+- **Settings** is a section list (Appearance, Day and night, Radio and tuner, Keys and steering wheel, Stations and backup, Floating player and history, Updates, Reports and advanced) with the chosen section beside it.
+- **Keys:** next/previous keys can step through saved stations (default), seek, or step one channel; play/pause can turn the radio on/off (default) or mute. Channel up/down keys follow the same choice. Media keys still go through the MediaSession, so they work with the app in the background. D-pad and rotary focus is shown as a thick ring in the theme colour.
+- FM/AM only: the FYT tuner has no DAB, so there is no DAB band.
+
 ## Polish (1.0.0)
 
 - **Day and night:** always day, always night, by time, sunset to sunrise (computed for Abu Dhabi on the unit, no GPS or internet), or with headlights (FYT main-module update 4, the ILL wire; it falls back to sunset/sunrise until the unit reports it). Day and night themes are chosen separately; the night theme defaults to Night red. It is re-evaluated each minute and immediately when the headlights change.

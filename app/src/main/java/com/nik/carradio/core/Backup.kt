@@ -30,9 +30,12 @@ object Backup {
             .put("ui", JSONObject().put("layout", ui.layout.name).put("cols", ui.gridColumns).put("theme", ui.themeId)
                 .put("text", ui.textScale.toDouble()).put("fsAfter", ui.fullscreenAfterSec).put("fsClock", ui.fullscreenClock)
                 .put("fsSpeed", ui.fullscreenSpeed).put("logos", ui.showLogos).put("night", ui.nightMode.name)
-                .put("nightTheme", ui.nightThemeId).put("nightStart", ui.nightStart).put("nightEnd", ui.nightEnd))
+                .put("nightTheme", ui.nightThemeId).put("nightStart", ui.nightStart).put("nightEnd", ui.nightEnd)
+                .put("style", ui.screenStyle.name).put("cruiseNight", ui.cruiseAtNight).put("cruiseTint", ui.cruiseTint.name)
+                .put("driver", ui.driverSide.name))
             .put("prefs", JSONObject().put("fmStep", p.fmStepKhz).put("amStep", p.amStepKhz).put("autoStart", p.autoStart)
-                .put("wheel", p.wheelUsesStations).put("resume", p.resumeOnStart).put("stream", p.streamUrl).put("ghRepo", p.githubRepo))
+                .put("wheel", p.wheelUsesStations).put("resume", p.resumeOnStart).put("stream", p.streamUrl).put("ghRepo", p.githubRepo)
+                .put("nextPrevKey", p.nextPrevKey.name).put("playKey", p.playKey.name))
             .put("logos", logos)
         val bytes = o.toString().toByteArray()
         ctx.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: error("Cannot write to that location")
@@ -58,7 +61,9 @@ object Backup {
                 fullscreenSpeed = u.optBoolean("fsSpeed", cur.fullscreenSpeed), showLogos = u.optBoolean("logos", cur.showLogos),
                 nightMode = runCatching { NightMode.valueOf(u.optString("night")) }.getOrDefault(cur.nightMode),
                 nightThemeId = u.optString("nightTheme", cur.nightThemeId),
-                nightStart = u.optInt("nightStart", cur.nightStart), nightEnd = u.optInt("nightEnd", cur.nightEnd)) }
+                nightStart = u.optInt("nightStart", cur.nightStart), nightEnd = u.optInt("nightEnd", cur.nightEnd),
+                screenStyle = UiConfig.enumOr(u.optString("style"), cur.screenStyle), cruiseAtNight = u.optBoolean("cruiseNight", cur.cruiseAtNight),
+                cruiseTint = UiConfig.enumOr(u.optString("cruiseTint"), cur.cruiseTint), driverSide = UiConfig.enumOr(u.optString("driver"), cur.driverSide)) }
         }
         o.optJSONObject("prefs")?.let { j ->
             val p = RadioController.prefs
@@ -66,6 +71,7 @@ object Backup {
             p.autoStart = j.optBoolean("autoStart", p.autoStart); p.wheelUsesStations = j.optBoolean("wheel", p.wheelUsesStations)
             p.resumeOnStart = j.optBoolean("resume", p.resumeOnStart); p.streamUrl = j.optString("stream", p.streamUrl)
             p.githubRepo = j.optString("ghRepo", p.githubRepo)
+            p.nextPrevKey = UiConfig.enumOr(j.optString("nextPrevKey"), p.nextPrevKey); p.playKey = UiConfig.enumOr(j.optString("playKey"), p.playKey)
         }
         var logoCount = 0
         o.optJSONObject("logos")?.let { l ->
