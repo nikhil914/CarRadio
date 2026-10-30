@@ -3,6 +3,9 @@ package com.nik.carradio.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -112,9 +115,12 @@ fun AppRoot() {
         awaitPointerEventScope { while (true) { awaitPointerEvent(PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis() } }
     }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
-            TabBar(tab) { tab = it; if (it == 2) page = SettingsPage.MAIN }
+            // Modern clean and Night cruise carry their own Stations / Settings entries on the Radio screen.
+            val ownBar = tab == 0 && LocalScreenStyle.current != com.nik.carradio.core.ScreenStyle.CLASSIC
+            if (!ownBar) TabBar(tab) { tab = it; if (it == 2) page = SettingsPage.MAIN }
             when (tab) {
-                0 -> RadioScreen(onOpenDiagnostics = { tab = 2; page = SettingsPage.DIAGNOSTICS }, onFullscreen = { fullscreen = true })
+                0 -> RadioScreen(onOpenDiagnostics = { tab = 2; page = SettingsPage.DIAGNOSTICS }, onFullscreen = { fullscreen = true },
+                    onStations = { tab = 1 }, onSettings = { tab = 2; page = SettingsPage.MAIN })
                 1 -> StationsScreen()
                 else -> when (page) {
                     SettingsPage.MAIN -> SettingsScreen(onOpen = { page = it })
@@ -328,75 +334,7 @@ fun LogScreen() {
 
 // ============================================================================ Settings
 
-@Composable
-fun SettingsScreen(onOpen: (SettingsPage) -> Unit = {}) {
-    val prefs = RadioController.prefs
-    var fmStep by remember { mutableIntStateOf(prefs.fmStepKhz) }
-    var amStep by remember { mutableIntStateOf(prefs.amStepKhz) }
-    var auto by remember { mutableStateOf(prefs.autoStart) }
-    var wheel by remember { mutableStateOf(prefs.wheelUsesStations) }
-    var resume by remember { mutableStateOf(prefs.resumeOnStart) }
-    val ctx = LocalContext.current
-    var url by remember { mutableStateOf(prefs.streamUrl) }
-    var repo by remember { mutableStateOf(prefs.githubRepo) }
-    var token by remember { mutableStateOf(prefs.githubToken) }
-    val crashed = remember { mutableStateOf(prefs.crashedBackends()) }
-    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        AppearanceSettings()
-        DayNightSettings()
-
-        SectionHeader("Radio")
-        Text("FM step", fontWeight = FontWeight.Bold)
-        FlowRowCompat { listOf(50, 100, 200).forEach { v -> FilterChip(selected = fmStep == v, onClick = { fmStep = v; prefs.fmStepKhz = v }, label = { Text("$v kHz") }) } }
-        Text("AM step", fontWeight = FontWeight.Bold)
-        FlowRowCompat { listOf(9, 10).forEach { v -> FilterChip(selected = amStep == v, onClick = { amStep = v; prefs.amStepKhz = v }, label = { Text("$v kHz") }) } }
-        SwitchRow("Start radio automatically when the app opens", auto) { auto = it; prefs.autoStart = it }
-        SwitchRow("Resume the radio when the unit starts or wakes, if it was playing", resume) { resume = it; prefs.resumeOnStart = it }
-        SwitchRow("Steering-wheel next/prev go through my station group", wheel) { wheel = it; prefs.wheelUsesStations = it }
-        if (com.nik.carradio.backend.fyt.StockRadio.socFm()) {
-            var flash by remember { mutableStateOf(prefs.allowStockFlash) }
-            SwitchRow("If needed, open the unit's own Radio app for a moment to start the FM chip", flash) { flash = it; prefs.allowStockFlash = it }
-            Text("On this unit the built-in Radio app drives the FM chip, so Car Radio keeps it running in the background. " +
-                "It first tries without showing it; this switch allows a short flash of its screen when that is not enough.", color = Grey, fontSize = 13.sp)
-        }
-
-        SectionHeader("Tuner")
-        TunerSettings()
-
-        SectionHeader("Updates")
-        UpdateSettings()
-
-        SectionHeader("Stations and backup")
-        LookupSection()
-        BackupSection()
-
-        SectionHeader("Floating player and song history")
-        ExtrasSettings()
-
-        SectionHeader("Radio key")
-        RadioKeySection()
-
-        SectionHeader("Internet radio (fallback)")
-        OutlinedTextField(url, { url = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Stream URL http(s)://…") })
-        Button(onClick = { prefs.streamUrl = url; AppLog.i("Stream URL saved"); RadioController.probeAll() }) { Text("Save URL") }
-
-        SectionHeader("Reports")
-        Text("GitHub upload: paste a fine-grained token with \"Issues: Read and write\" on the repo below (add \"Contents: Read and write\" only if you want to upload firmware files from Diagnostics). It stays on this unit only and is never put in backups.", color = Grey, fontSize = 13.sp)
-        OutlinedTextField(repo, { repo = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Repository (owner/name)") })
-        OutlinedTextField(token, { token = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), label = { Text("Token") },
-            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
-        Button(onClick = { prefs.githubRepo = repo; prefs.githubToken = token; AppLog.i("GitHub upload settings saved (token ${if (token.isBlank()) "cleared" else "set"})") }) { Text("Save GitHub settings") }
-
-        SectionHeader("Advanced")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onOpen(SettingsPage.DIAGNOSTICS) }, modifier = Modifier.height(56.dp)) { Text("Diagnostics and reports", fontSize = 16.sp) }
-            OutlinedButton(onClick = { onOpen(SettingsPage.LOG) }, modifier = Modifier.height(56.dp)) { Text("Log", fontSize = 16.sp) }
-        }
-        Text("Methods disabled after a crash: " + crashed.value.ifEmpty { setOf("none") }.joinToString(), color = Grey)
-        OutlinedButton(enabled = crashed.value.isNotEmpty(), onClick = { RadioController.reenableCrashed(); crashed.value = emptySet() }) { Text("Re-enable crashed methods") }
-        Text("Version ${BuildConfig.VERSION_NAME} · Android ${DeviceInfo.realAndroid()} (reported: ${android.os.Build.VERSION.RELEASE})", color = Grey, fontSize = 12.sp)
-    }
-}
+// SettingsScreen and its sections: see SettingsUi.kt
 
 @Composable
 internal fun SectionHeader(title: String) {
@@ -415,7 +353,7 @@ internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> U
 
 /** Whether the Radio-key proxy can replace com.syu.radio on this firmware, and how. */
 @Composable
-private fun RadioKeySection() {
+internal fun RadioKeySection() {
     val ctx = LocalContext.current
     val verdict by produceState("Checking…") { value = withContext(Dispatchers.IO) { DeviceInfo.proxyVerdict(ctx) } }
     Text(verdict, fontSize = 14.sp)
@@ -448,6 +386,16 @@ internal fun FlowRowCompat(content: @Composable () -> Unit) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { content() }
 }
 
+/**
+ * Clickable with a thick accent ring while it has key focus (D-pad, rotary knob). Compose gives
+ * clickables focus only outside touch mode, so the ring never shows for finger taps.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 internal fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: (() -> Unit)? = null, onDoubleClick: (() -> Unit)? = null) =
-    this.combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onDoubleClick)
+    this.composed {
+        var focused by remember { mutableStateOf(false) }
+        val ring = MaterialTheme.colorScheme.primary
+        Modifier.onFocusChanged { focused = it.isFocused }
+            .then(if (focused) Modifier.border(3.dp, ring, RoundedCornerShape(14.dp)) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onDoubleClick)
+    }
