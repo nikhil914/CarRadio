@@ -79,4 +79,33 @@ class ScreenshotTest {
         }
         shot("song_history") { SongHistoryDialog {} }
     }
+
+    private fun styled(name: String, style: com.nik.carradio.core.ScreenStyle) {
+        val scheme = if (style == com.nik.carradio.core.ScreenStyle.CRUISE) cruiseScheme(com.nik.carradio.core.CruiseTint.AMBER) else themeById("ocean").scheme()
+        compose.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(LocalScreenStyle provides style) { MaterialTheme(colorScheme = scheme) { AppRoot() } }
+        }
+        compose.onRoot().captureRoboImage("build/screenshots/$name.png")
+    }
+
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    @Test fun modernHeadUnit() = styled("modern_headunit", com.nik.carradio.core.ScreenStyle.MODERN)
+
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    @Test fun modernRightHandDrive() {
+        com.nik.carradio.core.UiConfig.update { it.copy(driverSide = com.nik.carradio.core.DriverSide.RIGHT) }
+        try { styled("modern_headunit_rhd", com.nik.carradio.core.ScreenStyle.MODERN) }
+        finally { com.nik.carradio.core.UiConfig.update { it.copy(driverSide = com.nik.carradio.core.DriverSide.LEFT) } }
+    }
+
+    @Config(qualifiers = "w400dp-h860dp-port-xxhdpi")
+    @Test fun modernPhone() = styled("modern_phone", com.nik.carradio.core.ScreenStyle.MODERN)
+
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    @Test fun cruiseHeadUnit() = styled("cruise_headunit", com.nik.carradio.core.ScreenStyle.CRUISE)
+
+    @Config(qualifiers = "w853dp-h480dp-land-hdpi")
+    @Test fun settingsHeadUnit() = shot("settings_headunit") {
+        androidx.compose.material3.Surface(color = themeById("ocean").scheme().background) { SettingsScreen() }
+    }
 }

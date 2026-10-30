@@ -3,6 +3,9 @@ package com.nik.carradio.core
 import android.content.Context
 import android.content.SharedPreferences
 
+enum class NextPrevKey(val label: String) { STATION("Next saved station"), SEEK("Seek to the next signal"), STEP("Step one channel") }
+enum class PlayKey(val label: String) { POWER("Radio on / off"), MUTE("Mute / unmute") }
+
 class Prefs(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("carradio", Context.MODE_PRIVATE)
 
@@ -45,6 +48,16 @@ class Prefs(context: Context) {
     var wheelUsesStations: Boolean
         get() = sp.getBoolean("wheel_stations", true)
         set(v) = sp.edit().putBoolean("wheel_stations", v).apply()
+
+    /** What the steering-wheel / media next and previous keys do. */
+    var nextPrevKey: NextPrevKey
+        get() = UiConfig.enumOr(sp.getString("key_next_prev", null), NextPrevKey.STATION)
+        set(v) = sp.edit().putString("key_next_prev", v.name).apply()
+
+    /** What the play/pause key (and a launcher's play button) does. */
+    var playKey: PlayKey
+        get() = UiConfig.enumOr(sp.getString("key_play", null), PlayKey.POWER)
+        set(v) = sp.edit().putString("key_play", v.name).apply()
 
     var streamUrl: String
         get() = sp.getString("stream_url", "") ?: ""

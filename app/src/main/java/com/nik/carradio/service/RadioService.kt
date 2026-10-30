@@ -55,11 +55,11 @@ class RadioService : Service() {
         super.onCreate()
         val s = MediaSessionCompat(this, "CarRadio", ComponentName(this, MediaButtonReceiver::class.java), null)
         s.setCallback(object : MediaSessionCompat.Callback() {
-            override fun onPlay() { AppLog.i("Media key: play"); RadioController.powerOn() }
-            override fun onPause() { AppLog.i("Media key: pause"); RadioController.powerOff() }
+            override fun onPlay() { AppLog.i("Media key: play"); RadioController.keyPlayPause(true) }
+            override fun onPause() { AppLog.i("Media key: pause"); RadioController.keyPlayPause(false) }
             override fun onStop() { AppLog.i("Media key: stop"); RadioController.powerOff() }
-            override fun onSkipToNext() { AppLog.i("Media key: next"); RadioController.stationStep(true) }
-            override fun onSkipToPrevious() { AppLog.i("Media key: previous"); RadioController.stationStep(false) }
+            override fun onSkipToNext() { AppLog.i("Media key: next"); RadioController.keyNextPrev(true) }
+            override fun onSkipToPrevious() { AppLog.i("Media key: previous"); RadioController.keyNextPrev(false) }
             override fun onFastForward() { AppLog.i("Media key: fast-forward -> seek up"); RadioController.seek(true) }
             override fun onRewind() { AppLog.i("Media key: rewind -> seek down"); RadioController.seek(false) }
             override fun onMediaButtonEvent(mediaButtonEvent: Intent): Boolean {

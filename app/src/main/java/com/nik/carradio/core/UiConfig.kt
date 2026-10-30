@@ -9,6 +9,22 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class StationLayout(val label: String) { GRID("Grid"), LIST("List"), CAROUSEL("Carousel") }
 
+/**
+ * How the Radio screen is laid out. Switching only recomposes the UI: the tuner, the service and
+ * the audio route never see it.
+ */
+enum class ScreenStyle(val label: String, val hint: String) {
+    MODERN("Modern clean", "Big frequency, large controls on the driver's side, favourites rail. Tools behind ⋯."),
+    CLASSIC("Classic dense", "Every control on one screen: status, Scan, Enter, Tuner, RDS flags."),
+    CRUISE("Night cruise", "Pure black, one colour, only frequency, name and three big buttons."),
+}
+
+/** Which side the driver sits: big controls go on that side in Modern clean. */
+enum class DriverSide(val label: String) { LEFT("Left-hand drive"), RIGHT("Right-hand drive") }
+
+/** Night cruise text colour. */
+enum class CruiseTint(val label: String) { AMBER("Amber"), CYAN("Cyan"), RED("Red") }
+
 @Immutable
 data class UiSettings(
     val layout: StationLayout = StationLayout.GRID,
@@ -34,6 +50,11 @@ data class UiSettings(
     val floatingPlayer: Boolean = false,
     /** Keep a history of song titles from radio text. */
     val songHistory: Boolean = true,
+    val screenStyle: ScreenStyle = ScreenStyle.MODERN,
+    /** Use Night cruise on the Radio screen whenever the night theme is active. */
+    val cruiseAtNight: Boolean = true,
+    val cruiseTint: CruiseTint = CruiseTint.AMBER,
+    val driverSide: DriverSide = DriverSide.LEFT,
 )
 
 /** Appearance settings as a flow, so the UI re-themes the moment a setting changes. */
@@ -59,6 +80,10 @@ object UiConfig {
             mainSpeed = sp.getBoolean("main_speed", false),
             floatingPlayer = sp.getBoolean("floating", false),
             songHistory = sp.getBoolean("song_history", true),
+            screenStyle = enumOr(sp.getString("style", null), ScreenStyle.MODERN),
+            cruiseAtNight = sp.getBoolean("cruise_night", true),
+            cruiseTint = enumOr(sp.getString("cruise_tint", null), CruiseTint.AMBER),
+            driverSide = enumOr(sp.getString("driver", null), DriverSide.LEFT),
         )
     }
 
@@ -71,6 +96,11 @@ object UiConfig {
             .putBoolean("fs_clock", n.fullscreenClock).putBoolean("logos", n.showLogos)
             .putString("night", n.nightMode.name).putString("night_theme", n.nightThemeId)
             .putInt("night_start", n.nightStart).putInt("night_end", n.nightEnd).putBoolean("fs_speed", n.fullscreenSpeed)
-            .putBoolean("main_speed", n.mainSpeed).putBoolean("floating", n.floatingPlayer).putBoolean("song_history", n.songHistory).apply()
+            .putBoolean("main_speed", n.mainSpeed).putBoolean("floating", n.floatingPlayer).putBoolean("song_history", n.songHistory)
+            .putString("style", n.screenStyle.name).putBoolean("cruise_night", n.cruiseAtNight)
+            .putString("cruise_tint", n.cruiseTint.name).putString("driver", n.driverSide.name).apply()
     }
+
+    inline fun <reified E : Enum<E>> enumOr(name: String?, default: E): E =
+        name?.let { n -> enumValues<E>().firstOrNull { it.name == n } } ?: default
 }

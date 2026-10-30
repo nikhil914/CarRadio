@@ -58,7 +58,8 @@ import com.nik.carradio.core.StationLogic
 import com.nik.carradio.core.StationStore
 
 /**
- * Radio tab (1.3). One calm screen, read at a glance from arm's length:
+ * Radio tab. Three layouts share the same RadioController state; switching never touches the tuner.
+ * Classic dense (1.3). One calm screen, read at a glance from arm's length:
  *  top row   – method/status left, FM·AM, TUNER, SCAN, ENTER right
  *  centre    – logo, station name, big frequency, one scrolling line of radio text, chips
  *  controls  – seek ◀◀ · previous station · play/off · next station · seek ▶▶ (88 dp)
@@ -66,7 +67,17 @@ import com.nik.carradio.core.StationStore
  * Sized for 1280×720 landscape (≈ 480 dp tall at 240 dpi); stacks on narrow screens.
  */
 @Composable
-fun RadioScreen(onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit) {
+fun RadioScreen(onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit, onStations: () -> Unit = {}, onSettings: () -> Unit = {}) {
+    when (LocalScreenStyle.current) {
+        com.nik.carradio.core.ScreenStyle.CLASSIC -> ClassicRadioScreen(onOpenDiagnostics, onFullscreen)
+        com.nik.carradio.core.ScreenStyle.MODERN -> ModernRadioScreen(onOpenDiagnostics, onFullscreen, onStations, onSettings)
+        com.nik.carradio.core.ScreenStyle.CRUISE -> CruiseRadioScreen(onFullscreen, onStations, onSettings)
+    }
+}
+
+/** Classic dense: the 1.3–1.5 Radio screen, every control exposed. */
+@Composable
+private fun ClassicRadioScreen(onOpenDiagnostics: () -> Unit, onFullscreen: () -> Unit) {
     val s by RadioController.stateFlow.collectAsState()
     val probing by RadioController.probing.collectAsState()
     var showEntry by remember { mutableStateOf(false) }
@@ -221,7 +232,7 @@ private fun Controls(s: RadioState, height: Dp, captions: Boolean) {
 }
 
 @Composable
-private fun SimpleControls(s: RadioState) {
+internal fun SimpleControls(s: RadioState) {
     val label = when {
         s.caps.contains(Cap.EXTERNAL_UI) -> "Open radio"
         s.powered -> "Stop stream"
@@ -233,7 +244,7 @@ private fun SimpleControls(s: RadioState) {
 }
 
 @Composable
-private fun ControlButton(icon: ImageVector, caption: String?, modifier: Modifier, primary: Boolean = false, enabled: Boolean = true,
+internal fun ControlButton(icon: ImageVector, caption: String?, modifier: Modifier, primary: Boolean = false, enabled: Boolean = true,
                           onClick: () -> Unit, onLong: (() -> Unit)? = null) {
     val c = MaterialTheme.colorScheme
     val bg = when { !enabled -> c.surfaceVariant.copy(alpha = .5f); primary -> c.primary; else -> c.surfaceVariant }
