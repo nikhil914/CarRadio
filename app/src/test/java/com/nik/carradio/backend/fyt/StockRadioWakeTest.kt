@@ -37,11 +37,14 @@ class StockRadioWakeTest {
     private inner class SocFmRadio : Binder() {
         var alive = false
         var freq = 522          // com.syu.ms placeholder until the stock app reports
+        /** Commands a cold stock radio app misses after its service was started (still opening the FM chip). */
+        var coldCmds = 0
         val forwarded = mutableListOf<String>()
         private val cbs = mutableMapOf<Int, MutableList<IBinder>>()
 
         private fun checkAlive() {
             if (!alive && shadowOf(app).peekNextStartedService()?.component == ComponentName("com.syu.radio", StockRadio.SERVICE)) {
+                if (coldCmds-- > 0) return
                 alive = true; freq = 9730; notify(Syu.U_FREQ, freq)
             }
         }
@@ -114,6 +117,30 @@ class StockRadioWakeTest {
         assertEquals(10110, radio.freq)
         assertEquals("service", RadioController.prefs.fytWake)
         assertTrue(radio.forwarded.contains("13 [1, 10110]"))
+        fyt.release(RadioController)
+    }
+
+    /** A cold stock radio app misses the first nudge; 1.6.0 gave up there and needed a manual radio off/on. */
+    @Test fun radioOnWaitsForASlowStockRadioApp() = runBlocking {
+        val radio = SocFmRadio().apply { coldCmds = 1 }
+        SyuConnection.useForTest(Syu.Toolkit(Toolkit(mapOf(Syu.MODULE_RADIO to radio, Syu.MODULE_MAIN to Plain()))))
+        val fyt = FytMcuBackend()
+        fyt.powerOn(RadioController, Band.FM, 101_100)
+        assertTrue("stock radio started: ${radio.forwarded}", radio.alive)
+        assertEquals(10110, radio.freq)
+        fyt.release(RadioController)
+    }
+
+    /** com.syu.ms replays a frequency from a stock radio app that is no longer running: still start it. */
+    @Test fun aRememberedFrequencyIsNotTakenAsProof() = runBlocking {
+        RadioController.prefs.setLastFreq(Band.FM, 98_100)
+        val radio = SocFmRadio().apply { freq = 9810 }
+        SyuConnection.useForTest(Syu.Toolkit(Toolkit(mapOf(Syu.MODULE_RADIO to radio, Syu.MODULE_MAIN to Plain()))))
+        val fyt = FytMcuBackend()
+        fyt.powerOn(RadioController, Band.FM, 101_100)
+        assertTrue("stock radio started: ${radio.forwarded}", radio.alive)
+        assertTrue("neighbour nudge: ${radio.forwarded}", radio.forwarded.contains("13 [1, 9820]"))
+        assertEquals(10110, radio.freq)
         fyt.release(RadioController)
     }
 }
