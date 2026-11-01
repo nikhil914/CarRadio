@@ -45,11 +45,19 @@ class FytMcuBackend : RadioBackend {
 
     /** A real frequency has been reported since connecting (SoC-FM: the stock radio app is alive). */
     @Volatile private var freqValid = false
+    /** When the callbacks were registered: reports in the first second are com.syu.ms replaying its cached values. */
+    @Volatile private var registeredAt = 0L
+    /** A frequency report arrived after the replay, i.e. something is really answering. */
+    @Volatile private var liveReport = false
 
     /**
      * SoC-FM units (sys.fyt.radio_type 3/4): make sure the stock radio app is running, because it
      * is what executes the commands com.syu.ms forwards. First its exported service (no screen),
      * then, only while Car Radio is on screen, its activity for a moment. Remembers what worked.
+     *
+     * A cold stock radio app (first start after boot or after Android killed it) can take several
+     * seconds to open the FM chip; 1.5.1 gave up after 4.5 s and only a manual radio off/on found
+     * it ready. It is now nudged a few times before the next method is tried.
      */
     private suspend fun ensureExecutor(h: BackendHost, why: String): Boolean {
         if (!StockRadio.socFm() || freqValid) return true
@@ -66,12 +74,22 @@ class FytMcuBackend : RadioBackend {
                 val started = if (method == "service") StockRadio.startService(ctx, pkg) else StockRadio.openActivity(ctx, pkg)
                 if (!started) continue
                 main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
-                // Nudge: ask for the last station; an alive stock app answers with a frequency.
-                val last = h.prefs.lastFreq(Band.FM).let { if (it in 87_500..108_000) it else 98_100 }
                 var alive = waitFor(1500) { freqValid }
-                if (!alive) { expect(4000); radio?.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, last / 10)); alive = waitFor(3000) { freqValid } }
+                // Nudge: ask for a station; a running stock app answers with a frequency. If com.syu.ms
+                // still shows the last station, ask for a neighbour so the answer is a real change
+                // (the tune that follows goes to the wanted station anyway).
+                val nudges = if (method == "service") 3 else 2
+                var n = 0
+                while (!alive && n < nudges) {
+                    n++
+                    val khz = nudgeTarget(h)
+                    if (n > 1) AppLog.i("FYT: stock radio still starting – asking again ($n/$nudges)")
+                    expect(4000); radio?.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, khz / 10))
+                    alive = waitFor(2500) { freqValid }
+                }
                 if (method == "activity") { StockRadio.bringCarRadioBack(ctx); delay(400) }
                 if (alive) {
+                    liveReport = true
                     if (h.prefs.fytWake != method) h.prefs.fytWake = method
                     AppLog.i("FYT: stock radio app is running (started by its $method), tuner at $reportedKhz kHz")
                     return true
@@ -80,6 +98,12 @@ class FytMcuBackend : RadioBackend {
             } finally { StockRadio.waking = false }
         }
         return false
+    }
+
+    private fun nudgeTarget(h: BackendHost): Int {
+        val last = h.prefs.lastFreq(Band.FM).let { if (it in 87_500..108_000) it else 98_100 }
+        if (abs(reportedKhz - last) >= 5) return last
+        return if (last + 100 <= 108_000) last + 100 else last - 100
     }
 
     /** Last frequency we asked for and when: (kHz, time). */
@@ -151,6 +175,7 @@ class FytMcuBackend : RadioBackend {
         radio = toolkit.module(Syu.MODULE_RADIO)
             ?: throw RadioException("FYT service has no radio module", "This firmware exposes no MCU tuner. Try the FmNative method in Diagnostics.")
         main = toolkit.module(Syu.MODULE_MAIN)
+        registeredAt = System.currentTimeMillis(); liveReport = false
         Syu.RADIO_UPDATES.forEach { code -> runCatching { radio!!.register(radioCb, code, 1) } }
         main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1); mm.register(mainCb, Syu.MAIN_U_ACC_ON, 1); mm.register(mainCb, Syu.MAIN_U_LAMPLET, 1) } }
         steer = runCatching { toolkit.module(Syu.MODULE_STEER) }.getOrNull()
@@ -173,6 +198,7 @@ class FytMcuBackend : RadioBackend {
                     freqValid = false; return
                 }
                 freqValid = true
+                if (System.currentTimeMillis() - registeredAt > 1000) liveReport = true
                 val prev = reportedKhz
                 reportedKhz = khz
                 // A slow MCU can report our own target after the expect window: never treat that
@@ -246,8 +272,25 @@ class FytMcuBackend : RadioBackend {
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
         host.update { it.copy(status = if (confirmed) "Playing via MCU tuner" else "Radio command sent (source not confirmed)") }
         if (StockRadio.socFm()) {
-            if (!ensureExecutor(host, "radio on")) host.update { it.copy(status = "The stock radio app is not running – open it once, then come back") }
-            else host.update { it.copy(status = "Playing via the unit's FM chip") }
+            // com.syu.ms replays the last frequency it saw when we connect, even if the stock radio
+            // app that reported it is gone. That is no proof anything is listening: check for real.
+            if (freqValid && !liveReport) {
+                AppLog.i("FYT: only a remembered frequency so far ($reportedKhz kHz) – checking the stock radio app is really running")
+                freqValid = false
+            }
+            var ready = ensureExecutor(host, "radio on")
+            if (!ready) {
+                // What a manual radio off/on did before 1.6.1: by now the stock app has usually finished starting.
+                AppLog.w("FYT: stock radio app not ready yet – trying once more")
+                main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
+                delay(1500)
+                ready = ensureExecutor(host, "radio on, second try")
+            }
+            if (!ready) throw RadioException(
+                if (AppState.foreground) "The stock radio app did not start" else "The stock radio app is not running yet",
+                if (AppState.foreground) "On this unit it drives the FM chip. Open the stock Radio app once, then come back to Car Radio."
+                else "On this unit it drives the FM chip. Car Radio will start it when you open Car Radio.")
+            host.update { it.copy(status = "Playing via the unit's FM chip") }
         }
         // The radio is on once the MCU plays radio. A tuning problem must not throw the whole
         // method away (1.0.0 fell back to the stock app here): report it and stay on FYT.
@@ -620,7 +663,7 @@ class FytMcuBackend : RadioBackend {
         radio?.let { r -> Syu.RADIO_UPDATES.forEach { runCatching { r.unregister(radioCb, it) } } }
         main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON); m.unregister(mainCb, Syu.MAIN_U_LAMPLET) } }
         steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
-        radio = null; main = null; steer = null; this.host = null; freqValid = false
+        radio = null; main = null; steer = null; this.host = null; freqValid = false; liveReport = false
     }
 
     private suspend fun waitFor(ms: Long, cond: () -> Boolean): Boolean {

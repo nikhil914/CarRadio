@@ -5,6 +5,7 @@ import com.nik.carradio.backend.BackendHost
 import com.nik.carradio.backend.RadioBackend
 import com.nik.carradio.backend.fmnative.FmNativeBackend
 import com.nik.carradio.backend.fyt.FytMcuBackend
+import com.nik.carradio.backend.fyt.StockRadio
 import com.nik.carradio.backend.hal.BroadcastRadioBackend
 import com.nik.carradio.backend.mtc.MtcBackend
 import com.nik.carradio.backend.stock.StockAppBackend
@@ -95,6 +96,9 @@ object RadioController : BackendHost {
      */
     fun startup(forceStart: Boolean = false) = scope.launch {
         val autoStart = prefs.autoStart || forceStart
+        // SoC-FM FYT units: the stock radio app executes every tuner command. Start it now, in the
+        // background, so it has finished opening the FM chip by the time the radio turns on.
+        if (autoStart) StockRadio.prewarm(app)
         // A method that only opens another app is never a reason to skip trying the real tuner
         // (1.0.0 remembered "stock" after an FYT tuning failure and never retried FYT).
         val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() && !it.caps.contains(Cap.EXTERNAL_UI) }
@@ -110,6 +114,7 @@ object RadioController : BackendHost {
                 if (!autoStart || last.caps.contains(Cap.EXTERNAL_UI)) return@launch
                 powerOnInternal(autoFallback = false)
                 if (state.powered) return@launch
+                if (waitingForStockRadio(last)) return@launch
                 AppLog.w("Fast start: ${last.id} failed to start – running the full probe to find another method")
             } else {
                 AppLog.w("Fast start: ${last.id} no longer works – running the full probe")
@@ -186,6 +191,28 @@ object RadioController : BackendHost {
     }
 
     // ------------------------------------------------------------------ commands
+
+    /** Radio on failed while Car Radio was in the background (boot, ACC on): retry when its screen opens. */
+    @Volatile private var retryWhenShown = false
+
+    /**
+     * FYT on a SoC-FM unit failed only because the stock radio app could not be started from the
+     * background. Another method would not help; Car Radio retries when its screen is opened.
+     */
+    private fun waitingForStockRadio(b: RadioBackend): Boolean {
+        if (b.id != "fyt" || !StockRadio.socFm() || AppState.foreground) return false
+        retryWhenShown = true
+        AppLog.i("FYT: will start the radio when Car Radio is opened (the stock radio app needs it in front)")
+        return true
+    }
+
+    /** Car Radio's screen came to the front. */
+    fun onAppShown() {
+        if (!retryWhenShown || state.powered) return
+        retryWhenShown = false
+        AppLog.i("Car Radio opened – retrying radio on")
+        powerOn()
+    }
 
     fun powerToggle() = if (state.powered) powerOff() else powerOn()
     fun powerOn() = scope.launch { powerOnInternal(autoFallback = prefs.preferredBackend == null) }
@@ -351,7 +378,7 @@ object RadioController : BackendHost {
         }
         if (!prefs.resumeOnStart || !prefs.wasPlaying) return
         AppLog.i("ACC on: re-claiming the radio source and last station")
-        scope.launch { powerOnInternal(autoFallback = false) }
+        scope.launch { StockRadio.prewarm(app); powerOnInternal(autoFallback = false); active?.let { if (!state.powered) waitingForStockRadio(it) } }
     }
 
     /** Boot: if the radio was on when the unit went down, bring it back. */

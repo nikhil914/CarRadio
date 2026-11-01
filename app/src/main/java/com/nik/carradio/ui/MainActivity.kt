@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
         com.nik.carradio.core.Updater.onResume(this)
     }
 
-    override fun onStart() { super.onStart(); com.nik.carradio.core.AppState.foreground = true; com.nik.carradio.service.FloatingPlayer.onAppShown() }
+    override fun onStart() { super.onStart(); com.nik.carradio.core.AppState.foreground = true; com.nik.carradio.service.FloatingPlayer.onAppShown(); RadioController.onAppShown() }
     override fun onStop() {
         super.onStop()
         com.nik.carradio.core.AppState.foreground = false
