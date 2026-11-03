@@ -118,3 +118,19 @@ headunit_landscape (tuner driven through FmService/libfmjni, Syu used for the so
   runs; radio on asks for a neighbouring frequency and waits for a real answer.
 - If the stock app can only be woken by its screen and Car Radio is in the background (boot, ACC on),
   Car Radio no longer falls back to another method: it retries radio on when its screen is opened.
+
+### Steering-wheel next/prev on SoC-FM units (1.6.1)
+
+Reported on the UIS8141E: wheel next kept landing on 88.0 (the stock radio app's first preset).
+One press can reach both Car Radio (media key) and com.syu.ms, which forwards it to the stock
+radio app; the app's jump came while Car Radio was still in its own "expect" window and was
+ignored, so 88.0 stuck. Now:
+
+- Car Radio registers for update 28 (`U_FORWARD`). Forwarded `[0]`/`[1]` (next/previous preset,
+  never sent by Car Radio) are wheel keys; forwarded step/seek count only outside Car Radio's own
+  command window. A fresh wheel key is acted on even while a tune is still settling.
+- After Car Radio reaches a station it defends it for 4 s: a jump with no key in that time is
+  undone (at most twice).
+- A media key and a vendor jump within 1.5 s in the same direction are one press, handled once.
+- No key reported at all: the tuner landing on the same frequency again from another station
+  (within 2 min) is treated as wheel NEXT.

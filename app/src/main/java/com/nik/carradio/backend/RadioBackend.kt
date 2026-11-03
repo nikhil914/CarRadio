@@ -24,6 +24,9 @@ interface BackendHost {
      */
     fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean)
 
+    /** The hardware left the station Car Radio just tuned (vendor app acted on the same key): tune it again. */
+    fun onVendorOverride(band: Band, khz: Int) {}
+
     /** Ignition (ACC) changed, as reported by the vendor MCU. */
     fun onAccChanged(on: Boolean)
 }

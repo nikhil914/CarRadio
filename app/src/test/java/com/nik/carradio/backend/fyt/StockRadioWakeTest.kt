@@ -66,10 +66,15 @@ class StockRadioWakeTest {
             }
             return true
         }
+        /** The stock radio app changes station on its own (a wheel press it handled). */
+        fun vendorJump(v10: Int) { freq = v10; notify(Syu.U_FREQ, freq) }
+        /** com.syu.ms forwards a command to the stock radio app (update 28). */
+        fun forward(vararg ints: Int) = cbs[Syu.U_FORWARD]?.toList()?.forEach { send(it, Syu.U_FORWARD, *ints) }
+
         private fun notify(c: Int, v: Int) = cbs[c]?.toList()?.forEach { send(it, c, v) }
-        private fun send(cb: IBinder, c: Int, v: Int) {
+        private fun send(cb: IBinder, c: Int, vararg v: Int) {
             val p = Parcel.obtain()
-            try { p.writeInterfaceToken(Syu.D_CALLBACK); p.writeInt(c); p.writeIntArray(intArrayOf(v)); p.writeFloatArray(null); p.writeStringArray(null)
+            try { p.writeInterfaceToken(Syu.D_CALLBACK); p.writeInt(c); p.writeIntArray(v); p.writeFloatArray(null); p.writeStringArray(null)
                 cb.transact(1, p, null, IBinder.FLAG_ONEWAY) } finally { p.recycle() }
         }
     }
@@ -90,6 +95,25 @@ class StockRadioWakeTest {
             reply?.writeNoException(); reply?.writeStrongBinder(modules[m])
             return true
         }
+    }
+
+    /** Records what the backend asks the controller to do about wheel presses. */
+    private inner class FakeHost : com.nik.carradio.backend.BackendHost {
+        override val context get() = app
+        override val prefs get() = RadioController.prefs
+        @Volatile override var state = com.nik.carradio.core.RadioState()
+        val steps = mutableListOf<String>()
+        val overrides = mutableListOf<Int>()
+        override fun update(transform: (com.nik.carradio.core.RadioState) -> com.nik.carradio.core.RadioState) { state = transform(state) }
+        override fun onExternalStep(fromBand: Band, fromKhz: Int, up: Boolean) { steps += "${if (up) "next" else "prev"} from $fromKhz" }
+        override fun onVendorOverride(band: Band, khz: Int) { overrides += khz }
+        override fun onAccChanged(on: Boolean) {}
+    }
+
+    private fun connected(): Pair<SocFmRadio, FytMcuBackend> {
+        val radio = SocFmRadio()
+        SyuConnection.useForTest(Syu.Toolkit(Toolkit(mapOf(Syu.MODULE_RADIO to radio, Syu.MODULE_MAIN to Plain()))))
+        return radio to FytMcuBackend()
     }
 
     @Before fun setUp() {
@@ -118,6 +142,44 @@ class StockRadioWakeTest {
         assertEquals("service", RadioController.prefs.fytWake)
         assertTrue(radio.forwarded.contains("13 [1, 10110]"))
         fyt.release(RadioController)
+    }
+
+    /** Wheel NEXT forwarded to the stock radio app, which jumps to its first preset: go to the next saved station instead. */
+    @Test fun forwardedWheelKeyIsRedirectedEvenRightAfterATune() = runBlocking {
+        val (radio, fyt) = connected()
+        val h = FakeHost()
+        fyt.tune(h, Band.FM, 101_100)
+        radio.forward(Syu.C_NEXT_CHANNEL, 0)
+        radio.vendorJump(8800)
+        assertEquals(listOf("next from 101100"), h.steps)
+        assertTrue("no snap-back when a key explains it: ${h.overrides}", h.overrides.isEmpty())
+        fyt.release(h)
+    }
+
+    /** The stock radio app acts on a press Car Radio already handled: Car Radio's station wins. */
+    @Test fun jumpRightAfterOurTuneIsUndone() = runBlocking {
+        val (radio, fyt) = connected()
+        val h = FakeHost()
+        fyt.tune(h, Band.FM, 101_100)
+        radio.vendorJump(8800)
+        assertEquals(listOf(101_100), h.overrides)
+        assertTrue(h.steps.isEmpty())
+        fyt.release(h)
+    }
+
+    /** No key reported at all: landing on the same frequency again from another station is the wheel. */
+    @Test fun repeatedLandingWithoutKeyIsTheWheel() = runBlocking {
+        val (radio, fyt) = connected()
+        val h = FakeHost()
+        fyt.tune(h, Band.FM, 101_100)
+        kotlinx.coroutines.delay(4200)
+        radio.vendorJump(8800)              // first time: followed
+        assertTrue(h.steps.isEmpty())
+        fyt.tune(h, Band.FM, 104_000)
+        kotlinx.coroutines.delay(4200)
+        radio.vendorJump(8800)              // again from another station
+        assertEquals(listOf("next from 104000"), h.steps)
+        fyt.release(h)
     }
 
     /** A cold stock radio app misses the first nudge; 1.6.0 gave up there and needed a manual radio off/on. */

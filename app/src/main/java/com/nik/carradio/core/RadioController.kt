@@ -321,9 +321,24 @@ object RadioController : BackendHost {
     /** Target of the last station step still in flight, so fast wheel presses don't repeat one. */
     @Volatile private var pendingStep: Pair<Band, Int>? = null
 
+    /**
+     * One wheel press can arrive twice on FYT units: as a media key (here) and as the vendor's own
+     * jump (onExternalStep). Whichever comes second within this time is the same press.
+     */
+    private val samePressMs = 1500L
+    /** Last station step: (up, target, time) and who made it. */
+    @Volatile private var lastKeyStep: Triple<Boolean, Pair<Band, Int>, Long>? = null
+    @Volatile private var lastExternalStep: Triple<Boolean, Pair<Band, Int>, Long>? = null
+
+    private fun recent(t: Triple<Boolean, Pair<Band, Int>, Long>?, up: Boolean) =
+        t?.takeIf { it.first == up && System.currentTimeMillis() - it.third < samePressMs }
+
     /** Steering-wheel / UI next-previous: moves through the selected group, wrapping. */
     fun stationStep(up: Boolean) {
-        val (band, khz) = pendingStep ?: (state.band to state.freqKhz)
+        recent(lastExternalStep, up)?.let { AppLog.i("Station ${if (up) "next" else "previous"}: same press the tuner already reported – already going to ${it.second.second} kHz"); return }
+        // The station Car Radio last went to, unless the user has tuned elsewhere since.
+        val recentTarget = (lastKeyStep ?: lastExternalStep)?.takeIf { System.currentTimeMillis() - it.third < 6000 }?.second
+        val (band, khz) = pendingStep ?: recentTarget ?: (state.band to state.freqKhz)
         val next = StationLogic.neighbour(StationStore.data.value, band, khz, up)
         if (next == null) {
             if (active?.caps?.contains(Cap.SEEK) == true) seek(up)
@@ -332,6 +347,7 @@ object RadioController : BackendHost {
         }
         if (state.onlineStation != null) { AppLog.i("Station ${if (up) "next" else "previous"} (online) -> ${next.label()}"); playStation(next); return }
         pendingStep = next.band to next.freqKhz
+        lastKeyStep = Triple(up, next.band to next.freqKhz, System.currentTimeMillis())
         AppLog.i("Station ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
         val target = next.band to next.freqKhz
         tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
@@ -362,11 +378,23 @@ object RadioController : BackendHost {
         if (_scanProgress.value != null) return
         val d = StationStore.data.value
         if (StationLogic.visible(d).size < 2) { AppLog.i("Wheel redirect skipped: fewer than 2 stations in this group"); return }
+        recent(lastKeyStep, up)?.let { (_, t, _) ->
+            // Car Radio already moved for this press; the vendor jump is the same press: go back.
+            AppLog.i("Wheel ${if (up) "next" else "previous"}: same press Car Radio already handled – back to ${t.second} kHz")
+            tune(t.second, t.first); return
+        }
         val next = StationLogic.neighbour(d, fromBand, fromKhz, up) ?: return
         pendingStep = next.band to next.freqKhz
+        lastExternalStep = Triple(up, next.band to next.freqKhz, System.currentTimeMillis())
         AppLog.i("Wheel ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
         val target = next.band to next.freqKhz
         tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
+    }
+
+    override fun onVendorOverride(band: Band, khz: Int) {
+        if (!prefs.wheelUsesStations || _scanProgress.value != null || !state.powered) return
+        if (pendingStep != null) return   // a newer step is already on its way
+        tune(khz, band)
     }
 
     override fun onAccChanged(on: Boolean) {
@@ -389,6 +417,7 @@ object RadioController : BackendHost {
     }
 
     fun playStation(s: Station) {
+        lastKeyStep = null; lastExternalStep = null   // a chosen station is the new base for next/previous
         // While a station plays over the internet, the list keeps using the internet if it can.
         if (state.onlineStation != null) { if (s.streamUrl.isNotBlank()) listenOnline(s) else backToFm(s); return }
         tune(s.freqKhz, s.band)

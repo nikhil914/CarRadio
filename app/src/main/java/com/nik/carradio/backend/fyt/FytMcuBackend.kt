@@ -118,16 +118,55 @@ class FytMcuBackend : RadioBackend {
             else -> null
         }
         if (dir != null) {
-            lastSteer = dir to System.currentTimeMillis()
-            AppLog.i("FYT steer key: ${if (dir) "NEXT" else "PREVIOUS"} (update=$code ints=${ints?.contentToString()})")
-            // Key reported just after the jump it caused: redirect now.
-            val jump = unexplained?.takeIf { System.currentTimeMillis() - it.second < 1500 }
-            val h = host
-            if (jump != null && h != null) { unexplained = null; lastSteer = null; redirect(h, jump.first, dir) }
+            onWheelKey(dir, "steer module update=$code ints=${ints?.contentToString()}")
         } else if (ints != null && ints.isNotEmpty()) {
             AppLog.i("FYT steer update=$code ints=${ints.contentToString()}")
         }
     }
+
+    /** Wheel next/prev seen (steer module, or a key com.syu.ms forwarded to the stock radio app). */
+    private fun onWheelKey(up: Boolean, source: String) {
+        lastSteer = up to System.currentTimeMillis()
+        AppLog.i("FYT wheel key: ${if (up) "NEXT" else "PREVIOUS"} ($source)")
+        // Key reported just after the jump it caused: redirect now.
+        val jump = unexplained?.takeIf { System.currentTimeMillis() - it.second < 1500 }
+        val h = host
+        if (jump != null && h != null) { unexplained = null; lastSteer = null; redirect(h, jump.first, up) }
+    }
+
+    /** Learn tuner commands is running: the next/prev it sends are not wheel keys. */
+    @Volatile private var learning = false
+
+    /**
+     * SoC-FM units: com.syu.ms tells the stock radio app what to do on update 28. Car Radio never
+     * sends next/previous preset (0/1), so those are the wheel. Step/seek (3–6) are the wheel only
+     * when Car Radio is not sending commands itself.
+     */
+    private fun onForwarded(ints: IntArray?) {
+        val a = ints ?: return
+        val c = a.firstOrNull() ?: return
+        if (learning || com.nik.carradio.core.FullTest.active) return
+        val ownWindow = System.currentTimeMillis() < expectUntil
+        val up = when (c) {
+            Syu.C_NEXT_CHANNEL -> true
+            Syu.C_PREV_CHANNEL -> false
+            Syu.C_FREQ_UP, Syu.C_SEEK_UP -> if (ownWindow) null else true
+            Syu.C_FREQ_DOWN, Syu.C_SEEK_DOWN -> if (ownWindow) null else false
+            else -> null
+        }
+        if (up != null) onWheelKey(up, "forwarded to the stock radio ${a.contentToString()}")
+        else if (!ownWindow) AppLog.i("FYT: forwarded to the stock radio ${a.contentToString()}")
+    }
+
+    /**
+     * The station Car Radio just tuned and until when it is defended. The stock radio app on
+     * SoC-FM units can act on the same wheel press after Car Radio did (and jump to its own
+     * first preset, e.g. 88.0); while this holds, such a jump is undone instead of followed.
+     */
+    @Volatile private var hold: Pair<Int, Long>? = null
+    @Volatile private var holdReasserts = 0
+    /** Last landing of a jump nobody explained: (kHz, time). The same landing twice is the wheel. */
+    @Volatile private var lastUnexplainedTo: Pair<Int, Long>? = null
 
     private val radioCb = Syu.Callback { code, ints, _, strs -> onRadioUpdate(code, ints, strs) }
     @Volatile private var acc = -1
@@ -177,6 +216,8 @@ class FytMcuBackend : RadioBackend {
         main = toolkit.module(Syu.MODULE_MAIN)
         registeredAt = System.currentTimeMillis(); liveReport = false
         Syu.RADIO_UPDATES.forEach { code -> runCatching { radio!!.register(radioCb, code, 1) } }
+        // update=0: only future forwards, no replay of an old key.
+        if (StockRadio.socFm()) runCatching { radio!!.register(radioCb, Syu.U_FORWARD, 0) }
         main?.let { mm -> runCatching { mm.register(mainCb, Syu.MAIN_U_APP_ID, 1); mm.register(mainCb, Syu.MAIN_U_ACC_ON, 1); mm.register(mainCb, Syu.MAIN_U_LAMPLET, 1) } }
         steer = runCatching { toolkit.module(Syu.MODULE_STEER) }.getOrNull()
         // update=0: only future key events, no replay of stale values.
@@ -204,7 +245,21 @@ class FytMcuBackend : RadioBackend {
                 // A slow MCU can report our own target after the expect window: never treat that
                 // as a wheel jump, or one press would move two stations.
                 val ours = commanded?.let { (t, at) -> abs(t - khz) < 5 && System.currentTimeMillis() - at < 8000 } == true
-                if (prev > 0 && khz != prev && !ours && System.currentTimeMillis() > expectUntil) onVendorTune(h, prev, khz)
+                if (prev > 0 && khz != prev && !ours) {
+                    val now = System.currentTimeMillis()
+                    val keyFresh = lastSteer?.let { now - it.second < 2500 } == true
+                    val held = hold?.takeIf { (t, until) -> now < until && abs(t - khz) >= 5 }
+                    when {
+                        // A wheel key moves on even while Car Radio is still busy with the last station.
+                        keyFresh -> onVendorTune(h, prev, khz)
+                        held != null && holdReasserts < 2 -> {
+                            holdReasserts++
+                            AppLog.i("FYT: tuner jumped to $khz kHz right after Car Radio tuned ${held.first} – going back (${holdReasserts}/2)")
+                            h.onVendorOverride(Freq.bandOf(held.first), held.first)
+                        }
+                        now > expectUntil -> onVendorTune(h, prev, khz)
+                    }
+                }
                 val band = Freq.bandOf(khz)
                 h.update { it.copy(freqKhz = khz, band = band, stationName = if (it.freqKhz != khz) "" else it.stationName, radioText = if (it.freqKhz != khz) "" else it.radioText, pty = if (it.freqKhz != khz) 0 else it.pty) }
                 h.prefs.setLastFreq(band, khz)
@@ -236,6 +291,7 @@ class FytMcuBackend : RadioBackend {
             Syu.U_SENSITY_AM -> if (v != null) h.update { it.copy(sensAm = v) }
             Syu.U_SENSITY_FM -> if (v != null) h.update { it.copy(sensFm = v) }
             Syu.U_CHANNEL_FREQ -> if (ints != null && ints.isNotEmpty()) AppLog.i("FYT: preset frequencies ${ints.take(24)}")
+            Syu.U_FORWARD -> onForwarded(ints)
         }
     }
 
@@ -248,7 +304,18 @@ class FytMcuBackend : RadioBackend {
         if (com.nik.carradio.core.FullTest.active) return
         val key = lastSteer?.takeIf { System.currentTimeMillis() - it.second < 2500 }
         if (key == null) {
-            unexplained = fromKhz to System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            val again = lastUnexplainedTo?.let { (k, at) -> abs(k - toKhz) < 5 && now - at < 120_000 } == true
+            lastUnexplainedTo = toKhz to now
+            if (again && abs(fromKhz - toKhz) >= 5) {
+                // The tuner keeps landing on the same frequency (the stock app's first preset) from
+                // different stations: that is the wheel, whose key this firmware does not report.
+                AppLog.i("FYT: tuner jumped to $toKhz kHz again with no key reported – treating it as wheel NEXT")
+                unexplained = null
+                redirect(h, fromKhz, true)
+                return
+            }
+            unexplained = fromKhz to now
             AppLog.i("FYT: tuner moved $fromKhz -> $toKhz kHz by itself (no wheel key yet) – following it unless a key arrives")
             return
         }
@@ -393,6 +460,18 @@ class FytMcuBackend : RadioBackend {
     private var bandInfoAsked = false
 
     override suspend fun tune(host: BackendHost, band: Band, khz: Int) {
+        tuneInner(host, band, khz)
+        val target = Freq.clamp(band, khz)
+        if (abs(reportedKhz - target) < 5) {
+            // Done: later jumps are not ours. Defend this station for a few seconds.
+            expectUntil = System.currentTimeMillis() + 200
+            val same = hold?.let { (t, until) -> t == target && System.currentTimeMillis() < until } == true
+            hold = target to System.currentTimeMillis() + 4000
+            if (!same) holdReasserts = 0
+        }
+    }
+
+    private suspend fun tuneInner(host: BackendHost, band: Band, khz: Int) {
         ensure(host)
         if (!ensureExecutor(host, "tune")) throw RadioException("The stock radio app is not running",
             "On this unit it drives the FM chip. Open the stock Radio app once, then come back to Car Radio.")
@@ -627,6 +706,11 @@ class FytMcuBackend : RadioBackend {
      * moved the tuner. Learned formats are saved. Ends back near the starting frequency.
      */
     suspend fun learnCommands(host: BackendHost): List<String> {
+        learning = true
+        try { return learnCommandsInner(host) } finally { learning = false }
+    }
+
+    private suspend fun learnCommandsInner(host: BackendHost): List<String> {
         ensure(host)
         host.prefs.clearFytVariants()
         val out = mutableListOf<String>()
@@ -660,10 +744,10 @@ class FytMcuBackend : RadioBackend {
     }
 
     override fun release(host: BackendHost) {
-        radio?.let { r -> Syu.RADIO_UPDATES.forEach { runCatching { r.unregister(radioCb, it) } } }
+        radio?.let { r -> (Syu.RADIO_UPDATES + Syu.U_FORWARD).forEach { runCatching { r.unregister(radioCb, it) } } }
         main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON); m.unregister(mainCb, Syu.MAIN_U_LAMPLET) } }
         steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
-        radio = null; main = null; steer = null; this.host = null; freqValid = false; liveReport = false
+        radio = null; main = null; steer = null; this.host = null; freqValid = false; liveReport = false; hold = null; lastUnexplainedTo = null
     }
 
     private suspend fun waitFor(ms: Long, cond: () -> Boolean): Boolean {
