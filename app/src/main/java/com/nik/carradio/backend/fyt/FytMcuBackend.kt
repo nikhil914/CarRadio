@@ -47,6 +47,8 @@ class FytMcuBackend : RadioBackend {
     @Volatile private var freqValid = false
     /** When the callbacks were registered: reports in the first second are com.syu.ms replaying its cached values. */
     @Volatile private var registeredAt = 0L
+    /** The stock radio screen was opened since radio on; it is opened at most once per radio on. */
+    @Volatile private var stockScreenOpened = false
     /** A frequency report arrived after the replay, i.e. something is really answering. */
     @Volatile private var liveReport = false
 
@@ -66,9 +68,10 @@ class FytMcuBackend : RadioBackend {
         AppLog.step("FYT: stock radio app not reporting ($why) – starting $pkg")
         val order = if (h.prefs.fytWake == "activity") listOf("activity", "service") else listOf("service", "activity")
         for (method in order) {
-            if (method == "activity" && (!AppState.foreground || !h.prefs.allowStockFlash)) {
-                AppLog.i("FYT: not opening the stock radio screen (${if (!AppState.foreground) "Car Radio is not in front" else "disabled in Settings"})"); continue
+            if (method == "activity" && (!AppState.foreground || !h.prefs.allowStockFlash || stockScreenOpened)) {
+                AppLog.i("FYT: not opening the stock radio screen (${when { !AppState.foreground -> "Car Radio is not in front"; stockScreenOpened -> "already opened once since radio on"; else -> "disabled in Settings" }})"); continue
             }
+            if (method == "activity") stockScreenOpened = true
             StockRadio.waking = true
             try {
                 val started = if (method == "service") StockRadio.startService(ctx, pkg) else StockRadio.openActivity(ctx, pkg)
@@ -339,25 +342,11 @@ class FytMcuBackend : RadioBackend {
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
         host.update { it.copy(status = if (confirmed) "Playing via MCU tuner" else "Radio command sent (source not confirmed)") }
         if (StockRadio.socFm()) {
-            // com.syu.ms replays the last frequency it saw when we connect, even if the stock radio
-            // app that reported it is gone. That is no proof anything is listening: check for real.
-            if (freqValid && !liveReport) {
-                AppLog.i("FYT: only a remembered frequency so far ($reportedKhz kHz) – checking the stock radio app is really running")
-                freqValid = false
-            }
-            var ready = ensureExecutor(host, "radio on")
-            if (!ready) {
-                // What a manual radio off/on did before 1.6.1: by now the stock app has usually finished starting.
-                AppLog.w("FYT: stock radio app not ready yet – trying once more")
-                main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
-                delay(1500)
-                ready = ensureExecutor(host, "radio on, second try")
-            }
-            if (!ready) throw RadioException(
-                if (AppState.foreground) "The stock radio app did not start" else "The stock radio app is not running yet",
-                if (AppState.foreground) "On this unit it drives the FM chip. Open the stock Radio app once, then come back to Car Radio."
-                else "On this unit it drives the FM chip. Car Radio will start it when you open Car Radio.")
-            host.update { it.copy(status = "Playing via the unit's FM chip") }
+            stockScreenOpened = false
+            // As in 1.5.1 (confirmed on the unit): a frequency com.syu.ms reports counts, and a
+            // stock app that does not answer is not a reason to fail radio on.
+            if (!ensureExecutor(host, "radio on")) host.update { it.copy(status = "The stock radio app is not running – open it once, then come back") }
+            else host.update { it.copy(status = "Playing via the unit's FM chip") }
         }
         // The radio is on once the MCU plays radio. A tuning problem must not throw the whole
         // method away (1.0.0 fell back to the stock app here): report it and stay on FYT.

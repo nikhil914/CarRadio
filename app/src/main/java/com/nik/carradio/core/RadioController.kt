@@ -96,9 +96,8 @@ object RadioController : BackendHost {
      */
     fun startup(forceStart: Boolean = false) = scope.launch {
         val autoStart = prefs.autoStart || forceStart
-        // SoC-FM FYT units: the stock radio app executes every tuner command. Start it now, in the
-        // background, so it has finished opening the FM chip by the time the radio turns on.
-        if (autoStart) StockRadio.prewarm(app)
+        // Radio check only (logged); starting the stock radio app here made 1.6.1 test builds worse.
+        if (autoStart) StockRadio.prewarm(app, start = false)
         // A method that only opens another app is never a reason to skip trying the real tuner
         // (1.0.0 remembered "stock" after an FYT tuning failure and never retried FYT).
         val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() && !it.caps.contains(Cap.EXTERNAL_UI) }
@@ -406,7 +405,7 @@ object RadioController : BackendHost {
         }
         if (!prefs.resumeOnStart || !prefs.wasPlaying) return
         AppLog.i("ACC on: re-claiming the radio source and last station")
-        scope.launch { StockRadio.prewarm(app); powerOnInternal(autoFallback = false); active?.let { if (!state.powered) waitingForStockRadio(it) } }
+        scope.launch { powerOnInternal(autoFallback = false); active?.let { if (!state.powered) waitingForStockRadio(it) } }
     }
 
     /** Boot: if the radio was on when the unit went down, bring it back. */
