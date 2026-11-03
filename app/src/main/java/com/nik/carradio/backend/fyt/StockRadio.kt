@@ -29,13 +29,13 @@ object StockRadio {
      * App start: says whether this unit needs the stock radio app and, if so, starts its service
      * in the background (no screen). Returns true when the service was started.
      */
-    fun prewarm(ctx: Context): Boolean {
+    fun prewarm(ctx: Context, start: Boolean = true): Boolean {
         val type = DeviceInfo.prop("sys.fyt.radio_type")
         if (type.isEmpty()) return false
         if (!socFm()) { AppLog.i("Radio check: FYT radio_type=$type – MCU tuner, the stock radio app is not needed"); return false }
         val pkg = pkg(ctx) ?: run { AppLog.w("Radio check: FYT radio_type=$type (FM chip driven by the stock radio app), but no stock radio app is installed"); return false }
-        AppLog.i("Radio check: FYT radio_type=$type – the FM chip is driven by $pkg; starting it in the background")
-        return startService(ctx, pkg)
+        AppLog.i("Radio check: FYT radio_type=$type – the FM chip is driven by $pkg${if (start) "; starting it in the background" else ""}")
+        return start && startService(ctx, pkg)
     }
 
     fun startService(ctx: Context, pkg: String): Boolean = runCatching {

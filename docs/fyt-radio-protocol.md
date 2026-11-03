@@ -109,15 +109,12 @@ headunit_landscape (tuner driven through FmService/libfmjni, Syu used for the so
 
 ### Starting the stock radio app (1.6.1)
 
-- A cold stock radio app (first start after boot, or after Android killed it) can need several seconds
-  before it answers. 1.5.1 gave up after one nudge (~4.5 s), so the radio only played after a manual
-  radio off/on. Car Radio now starts the stock radio service at app start (and on ACC on), nudges it up
-  to three times, and retries the whole wake once before reporting an error.
-- On connect, com.syu.ms replays the last frequency it saw even when the stock app that reported it is
-  gone. A replayed frequency (first second after registering) is no longer taken as proof the stock app
-  runs; radio on asks for a neighbouring frequency and waits for a real answer.
-- If the stock app can only be woken by its screen and Car Radio is in the background (boot, ACC on),
-  Car Radio no longer falls back to another method: it retries radio on when its screen is opened.
+- The first 1.6.1 test build started the stock radio service at app start, distrusted the
+  frequency com.syu.ms replays on connect, and failed radio on when the stock app did not answer.
+  On the unit that was worse than 1.5.1: "Failed" on opening, and the stock radio screen kept
+  opening on every station change. All three were reverted to 1.5.1 behaviour.
+- Kept: the stock app is nudged up to three times (service) / twice (screen) before giving up,
+  and its screen is opened at most once per radio on.
 
 ### Steering-wheel next/prev on SoC-FM units (1.6.1)
 

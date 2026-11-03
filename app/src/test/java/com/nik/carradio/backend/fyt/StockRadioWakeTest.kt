@@ -192,17 +192,4 @@ class StockRadioWakeTest {
         assertEquals(10110, radio.freq)
         fyt.release(RadioController)
     }
-
-    /** com.syu.ms replays a frequency from a stock radio app that is no longer running: still start it. */
-    @Test fun aRememberedFrequencyIsNotTakenAsProof() = runBlocking {
-        RadioController.prefs.setLastFreq(Band.FM, 98_100)
-        val radio = SocFmRadio().apply { freq = 9810 }
-        SyuConnection.useForTest(Syu.Toolkit(Toolkit(mapOf(Syu.MODULE_RADIO to radio, Syu.MODULE_MAIN to Plain()))))
-        val fyt = FytMcuBackend()
-        fyt.powerOn(RadioController, Band.FM, 101_100)
-        assertTrue("stock radio started: ${radio.forwarded}", radio.alive)
-        assertTrue("neighbour nudge: ${radio.forwarded}", radio.forwarded.contains("13 [1, 9820]"))
-        assertEquals(10110, radio.freq)
-        fyt.release(RadioController)
-    }
 }
