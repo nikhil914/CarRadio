@@ -386,8 +386,9 @@ class FytMcuBackend : RadioBackend {
         // The stock radio app asks again every second until the MCU confirms; so does Car Radio.
         var confirmed = false
         for (i in 0 until 4) {
-            main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
-                ?: run { AppLog.w("FYT: main module missing – cannot switch audio source; sound may stay on the previous source"); break }
+            val m = main
+            if (m == null) { AppLog.w("FYT: main module missing – cannot switch audio source; sound may stay on the previous source"); break }
+            m.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
             if (waitFor(if (i == 0) 1200 else 1000) { appId == Syu.APP_ID_RADIO }) { confirmed = true; break }
         }
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
