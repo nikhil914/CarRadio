@@ -44,14 +44,19 @@ object StockRadio {
         return listed?.firstOrNull { it.name.contains("ActRadio", true) || it.name.contains("Act_Radio", true) }?.let { ComponentName(pkg, it.name) }
     }
 
+    /** Tests: sees each stock radio screen intent Car Radio starts. */
+    @Volatile internal var openedForTest: ((Intent) -> Unit)? = null
+
     /** Opens the stock radio screen already tuned to [khz]; falls back to its launcher screen. */
     fun openTuned(ctx: Context, pkg: String, khz: Int): Boolean {
         val c = radioScreen(ctx, pkg)
         if (c != null) {
             val ok = runCatching {
-                ctx.startActivity(Intent("com.syu.radio").setComponent(c)
+                val i = Intent("com.syu.radio").setComponent(c)
                     .setData(android.net.Uri.parse("carradio://tune?freq=${khz / 10}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                ctx.startActivity(i)
+                openedForTest?.invoke(i)
                 true
             }.onFailure { AppLog.w("Stock radio: could not open ${c.className} tuned", it) }.getOrDefault(false)
             if (ok) { AppLog.i("Stock radio: opened ${c.shortClassName} at ${khz / 10}"); return true }
