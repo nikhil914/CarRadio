@@ -13,8 +13,8 @@ android {
         // Head units in the field run Android 6 – 13; 21 keeps even very old units installable.
         minSdk = 21
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.6.0"
+        versionCode = 19
+        versionName = "1.6.3"
     }
 
     signingConfigs {
@@ -62,6 +62,8 @@ android {
                 if (project.findProperty("screenshots") == null) it.exclude("**/ScreenshotTest*")
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+                // Full assertion messages in the CI log.
+                it.testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL; events("failed") }
             }
         }
     }

@@ -98,6 +98,8 @@ object Syu {
     const val U_SENSITY_AM = 17
     const val U_SENSITY_FM = 18
     const val U_AUTO_SENSITY = 19
+    /** SoC-FM units (radio_type 3/4): a command com.syu.ms forwards to the stock radio app, [cmd, value…]. */
+    const val U_FORWARD = 28
     val RADIO_UPDATES = intArrayOf(U_BAND, U_FREQ, U_AREA, U_CHANNEL, U_CHANNEL_FREQ, U_PTY_ID, U_RDS_AF_ENABLE, U_RDS_TA, U_RDS_TP,
         U_RDS_TA_ENABLE, U_RDS_TEXT, U_RDS_CHANNEL_TEXT, U_RDS_ENABLE, U_EXTRA_FREQ_INFO, U_SENSITY_AM, U_SENSITY_FM, U_AUTO_SENSITY,
         U_STEREO, U_SEARCH_STATE, U_LOC, U_PS_TEXT)

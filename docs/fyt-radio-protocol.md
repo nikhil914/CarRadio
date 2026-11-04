@@ -106,3 +106,53 @@ headunit_landscape (tuner driven through FmService/libfmjni, Syu used for the so
   `[1,98100]` landed on 87.5 (out of range, clamped). Commands kept working with the app in the background.
 - The firmware's `libfmjni.so` refuses to load in another app (`JNI_OnLoad` fails), so the chip cannot
   be driven directly; Car Radio keeps the stock app running and tunes through com.syu.ms.
+
+### Starting the stock radio app (1.6.1)
+
+- The first 1.6.1 test build started the stock radio service at app start, distrusted the
+  frequency com.syu.ms replays on connect, and failed radio on when the stock app did not answer.
+  On the unit that was worse than 1.5.1: "Failed" on opening, and the stock radio screen kept
+  opening on every station change. All three were reverted to 1.5.1 behaviour.
+- Kept: the stock app is nudged up to three times (service) / twice (screen) before giving up,
+  and its screen is opened at most once per radio on.
+
+### Steering-wheel next/prev on SoC-FM units (1.6.1)
+
+Reported on the UIS8141E: wheel next kept landing on 88.0 (the stock radio app's first preset).
+One press can reach both Car Radio (media key) and com.syu.ms, which forwards it to the stock
+radio app; the app's jump came while Car Radio was still in its own "expect" window and was
+ignored, so 88.0 stuck. Now:
+
+- Car Radio registers for update 28 (`U_FORWARD`). Forwarded `[0]`/`[1]` (next/previous preset,
+  never sent by Car Radio) are wheel keys; forwarded step/seek count only outside Car Radio's own
+  command window. A fresh wheel key is acted on even while a tune is still settling.
+- After Car Radio reaches a station it defends it for 4 s: a jump with no key in that time is
+  undone (at most twice).
+- A media key and a vendor jump within 1.5 s in the same direction are one press, handled once.
+- No key reported at all: the tuner landing on the same frequency again from another station
+  (within 2 min) is treated as wheel NEXT.
+
+### Who carries out commands on radio types 3/4 (1.6.3)
+
+From the DABplay+ FM project's notes on the stock FYT apps (github.com/creafy/dabplayplusfm, `docs/fyt-radio.md`,
+EKIY T900, radio_type 4):
+
+- Only the stock radio app's **screen** (`Act_Radio` → page `onNotify`) carries out the commands com.syu.ms forwards
+  on update 28. Its keep-alive service only starts the process, which powers the chip up at the app's **own last
+  station** when the source becomes radio. So a frequency report is no proof that commands work: that is how 1.5–1.6.2
+  could think the stock app was ready while tuning and the wheel landed on its station (88.0).
+- The screen opens tuned: action `com.syu.radio`, component `com.syu.radio/com.syu.radio.act.ActRadio`, data with a
+  query parameter `freq` (10 kHz units). It keeps working behind other apps; its Back key gives up the radio source.
+- With `persist.lsec.radio.ms_handler` set, com.syu.ms drives the chip itself and the stock app is not needed.
+- The stock app re-asks for the radio source every second until main update 0 says 1.
+- An app that plays audio or holds audio focus becomes source 10 and the stock app powers the chip off (Car Radio
+  requests no focus for FYT).
+
+Car Radio 1.6.3: a command counts as carried out only when the tuner reaches the frequency Car Radio asked for. Until
+then, a tune (while Car Radio is in front) opens the stock radio screen tuned to the target, checks it, and brings
+Car Radio back; at most every 20 s. Opening Car Radio while the radio plays but does not obey does the same once.
+The radio check at start logs ms_handler and which stock screen was found.
+- Car Radio's Radio-key proxy (package `com.syu.radio`) must not be installed on radio types 3/4: it replaces the
+  stock radio app that drives the chip. NavRadio+'s RadioProxy does the same, and NavRadio+ lists only MCU-tuner FYT
+  platforms (UIS7862/7870/8581, SC9853i, SC9863A), not UIS8141. Radio on now stops with a clear message when the
+  proxy is installed on such a unit, and Settings → Radio key warns.
