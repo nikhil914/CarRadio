@@ -392,6 +392,9 @@ class FytMcuBackend : RadioBackend {
         }
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
         host.update { it.copy(status = if (confirmed) "Playing via MCU tuner" else "Radio command sent (source not confirmed)") }
+        if (StockRadio.socFm() && StockRadio.proxyInstalled(host.context)) throw RadioException(
+            "The Radio-key proxy replaced the unit's radio app",
+            "On this unit the stock radio app drives the FM chip, so FM cannot play while the proxy is installed. Settings → Apps → Radio → Uninstall updates, then restart the unit.")
         if (StockRadio.socFm()) {
             // As in 1.5.1 (confirmed on the unit): a frequency com.syu.ms reports counts, and a
             // stock app that does not answer is not a reason to fail radio on.

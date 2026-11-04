@@ -59,6 +59,12 @@ object StockRadio {
         return openActivity(ctx, pkg)
     }
 
+    /**
+     * Car Radio's own Radio-key proxy replaced the stock radio app. On SoC-FM units that removes
+     * the app that drives the FM chip, so no method can play FM until it is uninstalled.
+     */
+    fun proxyInstalled(ctx: Context): Boolean = DeviceInfo.signing(ctx, "com.syu.radio")?.isProxy == true
+
     fun pkg(ctx: Context): String? = listOf("com.syu.radio", "com.syu.carradio").firstOrNull { ctx.packageManager.getLaunchIntentForPackage(it) != null }
 
     /**
@@ -69,6 +75,7 @@ object StockRadio {
         val type = DeviceInfo.prop("sys.fyt.radio_type")
         if (type.isEmpty()) return false
         if (!socFm()) { AppLog.i("Radio check: FYT radio_type=$type${if (msHandler()) ", ms_handler set" else ""} – com.syu.ms drives the tuner, the stock radio app is not needed"); return false }
+        if (proxyInstalled(ctx)) { AppLog.e("Radio check: FYT radio_type=$type – the FM chip is driven by the stock radio app, but Car Radio's Radio-key proxy replaced it. Uninstall the proxy (Settings → Apps → Radio → Uninstall updates)."); return false }
         val pkg = pkg(ctx) ?: run { AppLog.w("Radio check: FYT radio_type=$type (FM chip driven by the stock radio app), but no stock radio app is installed"); return false }
         AppLog.i("Radio check: FYT radio_type=$type – the FM chip is driven by $pkg (radio screen: ${radioScreen(ctx, pkg)?.className ?: "not found, launcher used"})${if (start) "; starting it in the background" else ""}")
         return start && startService(ctx, pkg)
