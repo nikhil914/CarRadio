@@ -195,10 +195,12 @@ class StockRadioWakeTest {
         shadowOf(app.packageManager).addActivityIfNotPresent(ComponentName("com.syu.radio", "com.syu.radio.act.ActRadio"))
         val (radio, fyt) = connected()
         radio.screenOnly = true
-        fyt.powerOn(RadioController, Band.FM, 101_100)
-        assertEquals("screen opened tuned", "10110", radio.screenFreq)
-        assertEquals(10110, radio.freq)
-        assertTrue(!fyt.needsScreen)
+        val started = runCatching { fyt.powerOn(RadioController, Band.FM, 101_100) }
+        val why = "powerOn=${started.exceptionOrNull()} status=${RadioController.state.status} started=${shadowOf(app).peekNextStartedActivity()} " +
+            "screen=${StockRadio.radioScreen(app, "com.syu.radio")} forwarded=${radio.forwarded}"
+        assertEquals("screen opened tuned: $why", "10110", radio.screenFreq)
+        assertEquals("freq: $why", 10110, radio.freq)
+        assertTrue("needsScreen: $why", !fyt.needsScreen)
         fyt.release(RadioController)
     }
 
