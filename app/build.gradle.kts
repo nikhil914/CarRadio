@@ -62,6 +62,8 @@ android {
                 if (project.findProperty("screenshots") == null) it.exclude("**/ScreenshotTest*")
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+                // Full assertion messages in the CI log.
+                it.testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL; events("failed") }
             }
         }
     }
