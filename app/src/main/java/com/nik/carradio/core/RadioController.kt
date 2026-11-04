@@ -207,6 +207,14 @@ object RadioController : BackendHost {
 
     /** Car Radio's screen came to the front. */
     fun onAppShown() {
+        // SoC-FM FYT: the radio plays (the stock app's service powered the chip) but ignores Car
+        // Radio's commands until the stock radio screen has run. Now that Car Radio is in front,
+        // tune the last station, which opens that screen once.
+        val fyt = active as? FytMcuBackend
+        if (state.powered && fyt != null && fyt.needsScreen && !retryWhenShown) {
+            AppLog.i("Car Radio opened – the tuner does not obey yet, tuning ${prefs.lastFreq(Band.FM)} kHz through the stock radio screen")
+            tune(prefs.lastFreq(Band.FM), Band.FM); return
+        }
         if (!retryWhenShown || state.powered) return
         retryWhenShown = false
         AppLog.i("Car Radio opened – retrying radio on")
