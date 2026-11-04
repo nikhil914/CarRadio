@@ -197,7 +197,8 @@ class StockRadioWakeTest {
         radio.screenOnly = true
         val started = runCatching { fyt.powerOn(RadioController, Band.FM, 101_100) }
         val why = "powerOn=${started.exceptionOrNull()} status=${RadioController.state.status} started=${shadowOf(app).peekNextStartedActivity()} " +
-            "screen=${StockRadio.radioScreen(app, "com.syu.radio")} forwarded=${radio.forwarded}"
+            "screen=${StockRadio.radioScreen(app, "com.syu.radio")} forwarded=${radio.forwarded}\nlog:\n" +
+            com.nik.carradio.core.AppLog.lines.value.filter { "FYT" in it || "Stock" in it }.takeLast(30).joinToString("\n")
         assertEquals("screen opened tuned: $why", "10110", radio.screenFreq)
         assertEquals("freq: $why", 10110, radio.freq)
         assertTrue("needsScreen: $why", !fyt.needsScreen)
