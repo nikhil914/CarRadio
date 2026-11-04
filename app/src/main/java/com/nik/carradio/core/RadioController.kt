@@ -5,6 +5,7 @@ import com.nik.carradio.backend.BackendHost
 import com.nik.carradio.backend.RadioBackend
 import com.nik.carradio.backend.fmnative.FmNativeBackend
 import com.nik.carradio.backend.fyt.FytMcuBackend
+import com.nik.carradio.backend.fyt.StockRadio
 import com.nik.carradio.backend.hal.BroadcastRadioBackend
 import com.nik.carradio.backend.mtc.MtcBackend
 import com.nik.carradio.backend.stock.StockAppBackend
@@ -95,6 +96,8 @@ object RadioController : BackendHost {
      */
     fun startup(forceStart: Boolean = false) = scope.launch {
         val autoStart = prefs.autoStart || forceStart
+        // Radio check only (logged); starting the stock radio app here made 1.6.1 test builds worse.
+        if (autoStart) StockRadio.prewarm(app, start = false)
         // A method that only opens another app is never a reason to skip trying the real tuner
         // (1.0.0 remembered "stock" after an FYT tuning failure and never retried FYT).
         val last = backend(prefs.lastWorking)?.takeIf { it.id !in prefs.crashedBackends() && !it.caps.contains(Cap.EXTERNAL_UI) }
@@ -110,6 +113,7 @@ object RadioController : BackendHost {
                 if (!autoStart || last.caps.contains(Cap.EXTERNAL_UI)) return@launch
                 powerOnInternal(autoFallback = false)
                 if (state.powered) return@launch
+                if (waitingForStockRadio(last)) return@launch
                 AppLog.w("Fast start: ${last.id} failed to start – running the full probe to find another method")
             } else {
                 AppLog.w("Fast start: ${last.id} no longer works – running the full probe")
@@ -186,6 +190,36 @@ object RadioController : BackendHost {
     }
 
     // ------------------------------------------------------------------ commands
+
+    /** Radio on failed while Car Radio was in the background (boot, ACC on): retry when its screen opens. */
+    @Volatile private var retryWhenShown = false
+
+    /**
+     * FYT on a SoC-FM unit failed only because the stock radio app could not be started from the
+     * background. Another method would not help; Car Radio retries when its screen is opened.
+     */
+    private fun waitingForStockRadio(b: RadioBackend): Boolean {
+        if (b.id != "fyt" || !StockRadio.socFm() || AppState.foreground) return false
+        retryWhenShown = true
+        AppLog.i("FYT: will start the radio when Car Radio is opened (the stock radio app needs it in front)")
+        return true
+    }
+
+    /** Car Radio's screen came to the front. */
+    fun onAppShown() {
+        // SoC-FM FYT: the radio plays (the stock app's service powered the chip) but ignores Car
+        // Radio's commands until the stock radio screen has run. Now that Car Radio is in front,
+        // tune the last station, which opens that screen once.
+        val fyt = active as? FytMcuBackend
+        if (state.powered && fyt != null && fyt.needsScreen && !retryWhenShown) {
+            AppLog.i("Car Radio opened – the tuner does not obey yet, tuning ${prefs.lastFreq(Band.FM)} kHz through the stock radio screen")
+            tune(prefs.lastFreq(Band.FM), Band.FM); return
+        }
+        if (!retryWhenShown || state.powered) return
+        retryWhenShown = false
+        AppLog.i("Car Radio opened – retrying radio on")
+        powerOn()
+    }
 
     fun powerToggle() = if (state.powered) powerOff() else powerOn()
     fun powerOn() = scope.launch { powerOnInternal(autoFallback = prefs.preferredBackend == null) }
@@ -294,9 +328,24 @@ object RadioController : BackendHost {
     /** Target of the last station step still in flight, so fast wheel presses don't repeat one. */
     @Volatile private var pendingStep: Pair<Band, Int>? = null
 
+    /**
+     * One wheel press can arrive twice on FYT units: as a media key (here) and as the vendor's own
+     * jump (onExternalStep). Whichever comes second within this time is the same press.
+     */
+    private val samePressMs = 1500L
+    /** Last station step: (up, target, time) and who made it. */
+    @Volatile private var lastKeyStep: Triple<Boolean, Pair<Band, Int>, Long>? = null
+    @Volatile private var lastExternalStep: Triple<Boolean, Pair<Band, Int>, Long>? = null
+
+    private fun recent(t: Triple<Boolean, Pair<Band, Int>, Long>?, up: Boolean) =
+        t?.takeIf { it.first == up && System.currentTimeMillis() - it.third < samePressMs }
+
     /** Steering-wheel / UI next-previous: moves through the selected group, wrapping. */
     fun stationStep(up: Boolean) {
-        val (band, khz) = pendingStep ?: (state.band to state.freqKhz)
+        recent(lastExternalStep, up)?.let { AppLog.i("Station ${if (up) "next" else "previous"}: same press the tuner already reported – already going to ${it.second.second} kHz"); return }
+        // The station Car Radio last went to, unless the user has tuned elsewhere since.
+        val recentTarget = (lastKeyStep ?: lastExternalStep)?.takeIf { System.currentTimeMillis() - it.third < 6000 }?.second
+        val (band, khz) = pendingStep ?: recentTarget ?: (state.band to state.freqKhz)
         val next = StationLogic.neighbour(StationStore.data.value, band, khz, up)
         if (next == null) {
             if (active?.caps?.contains(Cap.SEEK) == true) seek(up)
@@ -305,6 +354,7 @@ object RadioController : BackendHost {
         }
         if (state.onlineStation != null) { AppLog.i("Station ${if (up) "next" else "previous"} (online) -> ${next.label()}"); playStation(next); return }
         pendingStep = next.band to next.freqKhz
+        lastKeyStep = Triple(up, next.band to next.freqKhz, System.currentTimeMillis())
         AppLog.i("Station ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
         val target = next.band to next.freqKhz
         tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
@@ -335,11 +385,23 @@ object RadioController : BackendHost {
         if (_scanProgress.value != null) return
         val d = StationStore.data.value
         if (StationLogic.visible(d).size < 2) { AppLog.i("Wheel redirect skipped: fewer than 2 stations in this group"); return }
+        recent(lastKeyStep, up)?.let { (_, t, _) ->
+            // Car Radio already moved for this press; the vendor jump is the same press: go back.
+            AppLog.i("Wheel ${if (up) "next" else "previous"}: same press Car Radio already handled – back to ${t.second} kHz")
+            tune(t.second, t.first); return
+        }
         val next = StationLogic.neighbour(d, fromBand, fromKhz, up) ?: return
         pendingStep = next.band to next.freqKhz
+        lastExternalStep = Triple(up, next.band to next.freqKhz, System.currentTimeMillis())
         AppLog.i("Wheel ${if (up) "next" else "previous"} -> ${next.label()} (${next.freqKhz} kHz)")
         val target = next.band to next.freqKhz
         tune(next.freqKhz, next.band).invokeOnCompletion { if (pendingStep == target) pendingStep = null }
+    }
+
+    override fun onVendorOverride(band: Band, khz: Int) {
+        if (!prefs.wheelUsesStations || _scanProgress.value != null || !state.powered) return
+        if (pendingStep != null) return   // a newer step is already on its way
+        tune(khz, band)
     }
 
     override fun onAccChanged(on: Boolean) {
@@ -351,7 +413,7 @@ object RadioController : BackendHost {
         }
         if (!prefs.resumeOnStart || !prefs.wasPlaying) return
         AppLog.i("ACC on: re-claiming the radio source and last station")
-        scope.launch { powerOnInternal(autoFallback = false) }
+        scope.launch { powerOnInternal(autoFallback = false); active?.let { if (!state.powered) waitingForStockRadio(it) } }
     }
 
     /** Boot: if the radio was on when the unit went down, bring it back. */
@@ -362,6 +424,7 @@ object RadioController : BackendHost {
     }
 
     fun playStation(s: Station) {
+        lastKeyStep = null; lastExternalStep = null   // a chosen station is the new base for next/previous
         // While a station plays over the internet, the list keeps using the internet if it can.
         if (state.onlineStation != null) { if (s.streamUrl.isNotBlank()) listenOnline(s) else backToFm(s); return }
         tune(s.freqKhz, s.band)
