@@ -131,3 +131,24 @@ ignored, so 88.0 stuck. Now:
 - A media key and a vendor jump within 1.5 s in the same direction are one press, handled once.
 - No key reported at all: the tuner landing on the same frequency again from another station
   (within 2 min) is treated as wheel NEXT.
+
+### Who carries out commands on radio types 3/4 (1.6.3)
+
+From the DABplay+ FM project's notes on the stock FYT apps (github.com/creafy/dabplayplusfm, `docs/fyt-radio.md`,
+EKIY T900, radio_type 4):
+
+- Only the stock radio app's **screen** (`Act_Radio` → page `onNotify`) carries out the commands com.syu.ms forwards
+  on update 28. Its keep-alive service only starts the process, which powers the chip up at the app's **own last
+  station** when the source becomes radio. So a frequency report is no proof that commands work: that is how 1.5–1.6.2
+  could think the stock app was ready while tuning and the wheel landed on its station (88.0).
+- The screen opens tuned: action `com.syu.radio`, component `com.syu.radio/com.syu.radio.act.ActRadio`, data with a
+  query parameter `freq` (10 kHz units). It keeps working behind other apps; its Back key gives up the radio source.
+- With `persist.lsec.radio.ms_handler` set, com.syu.ms drives the chip itself and the stock app is not needed.
+- The stock app re-asks for the radio source every second until main update 0 says 1.
+- An app that plays audio or holds audio focus becomes source 10 and the stock app powers the chip off (Car Radio
+  requests no focus for FYT).
+
+Car Radio 1.6.3: a command counts as carried out only when the tuner reaches the frequency Car Radio asked for. Until
+then, a tune (while Car Radio is in front) opens the stock radio screen tuned to the target, checks it, and brings
+Car Radio back; at most every 20 s. Opening Car Radio while the radio plays but does not obey does the same once.
+The radio check at start logs ms_handler and which stock screen was found.

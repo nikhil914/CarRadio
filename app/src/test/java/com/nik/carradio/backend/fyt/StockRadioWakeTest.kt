@@ -39,15 +39,22 @@ class StockRadioWakeTest {
         var freq = 522          // com.syu.ms placeholder until the stock app reports
         /** Commands a cold stock radio app misses after its service was started (still opening the FM chip). */
         var coldCmds = 0
+        /** Like the real unit: the service powers the chip at the stock app's last station (88.0), only its screen obeys commands. */
+        var screenOnly = false
+        var screenFreq: String? = null
         val forwarded = mutableListOf<String>()
         private val cbs = mutableMapOf<Int, MutableList<IBinder>>()
 
         private fun checkAlive() {
             if (!alive && shadowOf(app).peekNextStartedService()?.component == ComponentName("com.syu.radio", StockRadio.SERVICE)) {
                 if (coldCmds-- > 0) return
-                alive = true; freq = 9730; notify(Syu.U_FREQ, freq)
+                alive = true; freq = if (screenOnly) 8800 else 9730; notify(Syu.U_FREQ, freq)
+            }
+            if (screenFreq == null) shadowOf(app).peekNextStartedActivity()?.takeIf { it.component?.className?.contains("ActRadio") == true }?.let {
+                screenFreq = it.data?.getQueryParameter("freq"); alive = true
             }
         }
+        private fun obeys() = alive && (!screenOnly || screenFreq != null)
 
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
             if (code == INTERFACE_TRANSACTION) { reply?.writeString("com.syu.ipc.IRemoteModule"); return true }
@@ -56,7 +63,7 @@ class StockRadioWakeTest {
                 1 -> { val c = data.readInt(); val ints = data.createIntArray(); data.createFloatArray(); data.createStringArray()
                     forwarded += "$c ${ints?.contentToString()}"
                     checkAlive()
-                    if (alive && c == Syu.C_FREQ && ints?.size == 2 && ints[0] == 1) { freq = ints[1]; notify(Syu.U_FREQ, freq) } }
+                    if (obeys() && c == Syu.C_FREQ && ints?.size == 2 && ints[0] == 1) { freq = ints[1]; notify(Syu.U_FREQ, freq) } }
                 2 -> { data.readInt(); reply?.writeNoException(); reply?.writeInt(0) }
                 3 -> { val cb = data.readStrongBinder(); val c = data.readInt(); val upd = data.readInt()
                     cbs.getOrPut(c) { mutableListOf() } += cb
@@ -180,6 +187,19 @@ class StockRadioWakeTest {
         radio.vendorJump(8800)              // again from another station
         assertEquals(listOf("next from 104000"), h.steps)
         fyt.release(h)
+    }
+
+    /** The service alone powers the chip but ignores commands: open the stock radio screen tuned, then it obeys. */
+    @Test fun opensTheStockRadioScreenTunedWhenTheServiceDoesNotObey() = runBlocking {
+        AppState.foreground = true
+        shadowOf(app.packageManager).addActivityIfNotPresent(ComponentName("com.syu.radio", "com.syu.radio.act.ActRadio"))
+        val (radio, fyt) = connected()
+        radio.screenOnly = true
+        fyt.powerOn(RadioController, Band.FM, 101_100)
+        assertEquals("screen opened tuned", "10110", radio.screenFreq)
+        assertEquals(10110, radio.freq)
+        assertTrue(!fyt.needsScreen)
+        fyt.release(RadioController)
     }
 
     /** A cold stock radio app misses the first nudge; 1.6.0 gave up there and needed a manual radio off/on. */

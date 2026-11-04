@@ -47,8 +47,16 @@ class FytMcuBackend : RadioBackend {
     @Volatile private var freqValid = false
     /** When the callbacks were registered: reports in the first second are com.syu.ms replaying its cached values. */
     @Volatile private var registeredAt = 0L
-    /** The stock radio screen was opened since radio on; it is opened at most once per radio on. */
-    @Volatile private var stockScreenOpened = false
+    /** When Car Radio last opened the stock radio screen; not again within [SCREEN_COOLDOWN_MS]. */
+    @Volatile private var lastScreenAt = 0L
+    /**
+     * SoC-FM: a command Car Radio sent was really carried out (the tuner reached our target).
+     * A frequency report alone is not enough: the stock app's background service powers the chip
+     * up at its own last station but ignores commands until its screen has run.
+     */
+    @Volatile private var executorOk = false
+    /** SoC-FM unit whose tuner does not obey Car Radio yet: opening Car Radio should open the stock screen once. */
+    val needsScreen: Boolean get() = StockRadio.socFm() && !executorOk
     /** A frequency report arrived after the replay, i.e. something is really answering. */
     @Volatile private var liveReport = false
 
@@ -68,13 +76,11 @@ class FytMcuBackend : RadioBackend {
         AppLog.step("FYT: stock radio app not reporting ($why) – starting $pkg")
         val order = if (h.prefs.fytWake == "activity") listOf("activity", "service") else listOf("service", "activity")
         for (method in order) {
-            if (method == "activity" && (!AppState.foreground || !h.prefs.allowStockFlash || stockScreenOpened)) {
-                AppLog.i("FYT: not opening the stock radio screen (${when { !AppState.foreground -> "Car Radio is not in front"; stockScreenOpened -> "already opened once since radio on"; else -> "disabled in Settings" }})"); continue
-            }
-            if (method == "activity") stockScreenOpened = true
+            if (method == "activity" && !screenAllowed(h)) continue
+            if (method == "activity") lastScreenAt = System.currentTimeMillis()
             StockRadio.waking = true
             try {
-                val started = if (method == "service") StockRadio.startService(ctx, pkg) else StockRadio.openActivity(ctx, pkg)
+                val started = if (method == "service") StockRadio.startService(ctx, pkg) else StockRadio.openTuned(ctx, pkg, nudgeTarget(h))
                 if (!started) continue
                 main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
                 var alive = waitFor(1500) { freqValid }
@@ -101,6 +107,46 @@ class FytMcuBackend : RadioBackend {
             } finally { StockRadio.waking = false }
         }
         return false
+    }
+
+    private fun screenAllowed(h: BackendHost): Boolean {
+        val why = when {
+            !AppState.foreground -> "Car Radio is not in front"
+            !h.prefs.allowStockFlash -> "disabled in Settings"
+            System.currentTimeMillis() - lastScreenAt < SCREEN_COOLDOWN_MS -> "opened ${(System.currentTimeMillis() - lastScreenAt) / 1000} s ago"
+            else -> return true
+        }
+        AppLog.i("FYT: not opening the stock radio screen ($why)")
+        return false
+    }
+
+    /**
+     * SoC-FM: opens the stock radio screen tuned to [khz] (it tunes itself on open), checks the
+     * tuner got there, and brings Car Radio back. The screen keeps running behind Car Radio and
+     * carries out every later command.
+     */
+    private suspend fun wakeScreen(h: BackendHost, khz: Int, why: String): Boolean {
+        if (!StockRadio.socFm() || !screenAllowed(h)) return false
+        val ctx = h.context
+        val pkg = StockRadio.pkg(ctx) ?: return false
+        lastScreenAt = System.currentTimeMillis()
+        AppLog.step("FYT: commands not carried out yet ($why) – opening the stock radio screen at $khz kHz")
+        StockRadio.waking = true
+        try {
+            main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
+            commanded = khz to System.currentTimeMillis(); expect(9000)
+            if (!StockRadio.openTuned(ctx, pkg, khz)) return false
+            var ok = waitFor(4000) { abs(reportedKhz - khz) < 5 }
+            if (!ok) {
+                claimSourceQuick()
+                expect(4000); radio?.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, khz / 10))
+                ok = waitFor(2500) { abs(reportedKhz - khz) < 5 }
+            }
+            StockRadio.bringCarRadioBack(ctx); delay(400)
+            if (ok) { executorOk = true; freqValid = true; h.prefs.fytWake = "activity"; AppLog.i("FYT: stock radio screen is running, tuner at $reportedKhz kHz – commands work now") }
+            else AppLog.w("FYT: stock radio screen opened but the tuner is at $reportedKhz kHz, not $khz")
+            return ok
+        } finally { StockRadio.waking = false }
     }
 
     private fun nudgeTarget(h: BackendHost): Int {
@@ -248,6 +294,7 @@ class FytMcuBackend : RadioBackend {
                 // A slow MCU can report our own target after the expect window: never treat that
                 // as a wheel jump, or one press would move two stations.
                 val ours = commanded?.let { (t, at) -> abs(t - khz) < 5 && System.currentTimeMillis() - at < 8000 } == true
+                if (ours && khz != prev) executorOk = true
                 if (prev > 0 && khz != prev && !ours) {
                     val now = System.currentTimeMillis()
                     val keyFresh = lastSteer?.let { now - it.second < 2500 } == true
@@ -336,13 +383,16 @@ class FytMcuBackend : RadioBackend {
         ensure(host)
         expect()
         AppLog.step("FYT: switching MCU audio source to RADIO (main cmd 0, [1])")
-        main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
-            ?: AppLog.w("FYT: main module missing – cannot switch audio source; sound may stay on the previous source")
-        val confirmed = waitFor(2000) { appId == Syu.APP_ID_RADIO }
+        // The stock radio app asks again every second until the MCU confirms; so does Car Radio.
+        var confirmed = false
+        for (i in 0 until 4) {
+            main?.cmd(Syu.MAIN_C_APP_ID, intArrayOf(Syu.APP_ID_RADIO))
+                ?: run { AppLog.w("FYT: main module missing – cannot switch audio source; sound may stay on the previous source"); break }
+            if (waitFor(if (i == 0) 1200 else 1000) { appId == Syu.APP_ID_RADIO }) { confirmed = true; break }
+        }
         if (!confirmed) AppLog.w("FYT: MCU did not confirm radio source (appId=$appId). Continuing; if there is no sound open the stock radio once.")
         host.update { it.copy(status = if (confirmed) "Playing via MCU tuner" else "Radio command sent (source not confirmed)") }
         if (StockRadio.socFm()) {
-            stockScreenOpened = false
             // As in 1.5.1 (confirmed on the unit): a frequency com.syu.ms reports counts, and a
             // stock app that does not answer is not a reason to fail radio on.
             if (!ensureExecutor(host, "radio on")) host.update { it.copy(status = "The stock radio app is not running – open it once, then come back") }
@@ -386,7 +436,7 @@ class FytMcuBackend : RadioBackend {
     // checks the tuner really moved, and remembers the one that works on this unit.
 
     private class Variant(val label: String, val send: (Syu.Module) -> Unit)
-    private companion object { const val DIRECT_BROKEN = -2 }
+    private companion object { const val DIRECT_BROKEN = -2; const val SCREEN_COOLDOWN_MS = 20_000L }
 
     /**
      * Direct tune. From com.syu.ms (radio module command 13 → setFreq(mode, value) of the MCU
@@ -462,9 +512,10 @@ class FytMcuBackend : RadioBackend {
 
     private suspend fun tuneInner(host: BackendHost, band: Band, khz: Int) {
         ensure(host)
+        val target = Freq.clamp(band, khz)
+        if (StockRadio.socFm() && !executorOk && band == Band.FM && wakeScreen(host, target, "tune")) return
         if (!ensureExecutor(host, "tune")) throw RadioException("The stock radio app is not running",
             "On this unit it drives the FM chip. Open the stock Radio app once, then come back to Car Radio.")
-        val target = Freq.clamp(band, khz)
         if (currentBand() != null && currentBand() != band) setBand(host, band)
         if (abs(reportedKhz - target) < 5) return
         if (reportedKhz <= 0) {
@@ -496,7 +547,10 @@ class FytMcuBackend : RadioBackend {
             radio!!.cmd(spec.code, r.ints, r.floats, r.strings?.let { a -> Array(a.size) { a[it] } })
             if (waitFor(2500) { abs(reportedKhz - target) < 5 }) { AppLog.i("FYT: tuned with ${spec.label()}"); return }
             if (StockRadio.socFm()) {
-                // No answer: the stock radio app was probably killed. Start it and try once more.
+                // No answer: the stock radio screen is not running (killed, or never opened). Open it
+                // tuned, or start the app and try once more.
+                executorOk = false
+                if (band == Band.FM && wakeScreen(host, target, "no answer to tune")) return
                 freqValid = false
                 if (ensureExecutor(host, "no answer to tune")) {
                     expect(4000); radio!!.cmd(spec.code, r.ints, r.floats, r.strings?.let { a -> Array(a.size) { a[it] } })
@@ -736,7 +790,7 @@ class FytMcuBackend : RadioBackend {
         radio?.let { r -> (Syu.RADIO_UPDATES + Syu.U_FORWARD).forEach { runCatching { r.unregister(radioCb, it) } } }
         main?.let { m -> runCatching { m.unregister(mainCb, Syu.MAIN_U_APP_ID); m.unregister(mainCb, Syu.MAIN_U_ACC_ON); m.unregister(mainCb, Syu.MAIN_U_LAMPLET) } }
         steer?.let { st -> for (c in 0..255) runCatching { st.unregister(steerCb, c) } }
-        radio = null; main = null; steer = null; this.host = null; freqValid = false; liveReport = false; hold = null; lastUnexplainedTo = null
+        radio = null; main = null; steer = null; this.host = null; freqValid = false; liveReport = false; hold = null; lastUnexplainedTo = null; executorOk = false
     }
 
     private suspend fun waitFor(ms: Long, cond: () -> Boolean): Boolean {
