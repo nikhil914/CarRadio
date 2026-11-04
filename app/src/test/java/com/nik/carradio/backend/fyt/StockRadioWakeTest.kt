@@ -50,9 +50,12 @@ class StockRadioWakeTest {
                 if (coldCmds-- > 0) return
                 alive = true; freq = if (screenOnly) 8800 else 9730; notify(Syu.U_FREQ, freq)
             }
-            if (screenFreq == null) shadowOf(app).peekNextStartedActivity()?.takeIf { it.component?.className?.contains("ActRadio") == true }?.let {
-                screenFreq = it.data?.getQueryParameter("freq"); alive = true
-            }
+        }
+        init {
+            StockRadio.openedForTest = { i -> if (i.component?.className?.contains("ActRadio") == true) {
+                screenFreq = i.data?.getQueryParameter("freq"); alive = true
+                screenFreq?.toIntOrNull()?.let { freq = it; notify(Syu.U_FREQ, it) }   // the screen tunes itself on open
+            } }
         }
         private fun obeys() = alive && (!screenOnly || screenFreq != null)
 
@@ -137,7 +140,7 @@ class StockRadioWakeTest {
         spm.addIntentFilterForActivity(launch, IntentFilter(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) })
     }
 
-    @After fun tearDown() { SyuConnection.useForTest(null) }
+    @After fun tearDown() { SyuConnection.useForTest(null); StockRadio.openedForTest = null }
 
     @Test fun startsTheStockRadioServiceThenTunesDirectly() = runBlocking {
         val radio = SocFmRadio()
