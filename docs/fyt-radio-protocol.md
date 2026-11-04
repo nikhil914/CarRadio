@@ -152,3 +152,7 @@ Car Radio 1.6.3: a command counts as carried out only when the tuner reaches the
 then, a tune (while Car Radio is in front) opens the stock radio screen tuned to the target, checks it, and brings
 Car Radio back; at most every 20 s. Opening Car Radio while the radio plays but does not obey does the same once.
 The radio check at start logs ms_handler and which stock screen was found.
+- Car Radio's Radio-key proxy (package `com.syu.radio`) must not be installed on radio types 3/4: it replaces the
+  stock radio app that drives the chip. NavRadio+'s RadioProxy does the same, and NavRadio+ lists only MCU-tuner FYT
+  platforms (UIS7862/7870/8581, SC9853i, SC9863A), not UIS8141. Radio on now stops with a clear message when the
+  proxy is installed on such a unit, and Settings → Radio key warns.

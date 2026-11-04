@@ -357,6 +357,8 @@ internal fun RadioKeySection() {
     val ctx = LocalContext.current
     val verdict by produceState("Checking…") { value = withContext(Dispatchers.IO) { DeviceInfo.proxyVerdict(ctx) } }
     Text(verdict, fontSize = 14.sp)
+    if (com.nik.carradio.backend.fyt.StockRadio.socFm()) Text("Do not install the proxy on this unit: here the stock radio app drives the FM chip, and the proxy would replace it, so FM stops working.",
+        color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
     Text("The proxy is a tiny separate app (CarRadio-proxy-*.apk on the GitHub release page) that installs as an update to the unit's own radio app, " +
         "so the Radio icon and the hardware Radio key open Car Radio. Android only accepts it if the key matches – the line above says which file to use. " +
         "To undo: Settings → Apps → Radio → Uninstall updates.", color = Grey, fontSize = 13.sp)
