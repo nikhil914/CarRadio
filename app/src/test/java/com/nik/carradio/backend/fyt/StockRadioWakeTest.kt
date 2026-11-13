@@ -208,6 +208,14 @@ class StockRadioWakeTest {
         fyt.release(RadioController)
     }
 
+    /** Full radio test 1.6.3 on the unit: cmd(13,[1,98100]) (kHz) moved the tuner to 87.5 MHz. */
+    @Test fun socFmTuneFallbackNeverSendsKilohertz() {
+        val labels = FytMcuBackend().tuneVariants(Band.FM, 101_100, socFm = true).map { it.label }
+        assertEquals(listOf("cmd(13,[1,10110]) via band limits"), labels)
+        val mcu = FytMcuBackend().tuneVariants(Band.FM, 101_100, socFm = false).map { it.label }
+        assertEquals(3, mcu.size)
+    }
+
     /** A cold stock radio app misses the first nudge; 1.6.0 gave up there and needed a manual radio off/on. */
     @Test fun radioOnWaitsForASlowStockRadioApp() = runBlocking {
         val radio = SocFmRadio().apply { coldCmds = 1 }
