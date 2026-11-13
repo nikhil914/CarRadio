@@ -439,7 +439,7 @@ class FytMcuBackend : RadioBackend {
     // and the UIS8141E service ignored them. Each operation now tries the known formats,
     // checks the tuner really moved, and remembers the one that works on this unit.
 
-    private class Variant(val label: String, val send: (Syu.Module) -> Unit)
+    internal class Variant(val label: String, val send: (Syu.Module) -> Unit)
     private companion object { const val DIRECT_BROKEN = -2; const val SCREEN_COOLDOWN_MS = 20_000L }
 
     /**
@@ -449,11 +449,17 @@ class FytMcuBackend : RadioBackend {
      * knows after the MCU has sent its band-range packet (often only when the stock radio app
      * asked); until then it is silently dropped. That is why 1.0.0/1.0.1 fell back to stepping.
      */
-    private fun tuneVariants(band: Band, target: Int): List<Variant> {
+    internal fun tuneVariants(band: Band, target: Int, socFm: Boolean = StockRadio.socFm()): List<Variant> {
         val v10 = if (band == Band.FM) target / 10 else target      // 98.1 MHz → 9810; AM in kHz
+        val inV10 = Variant("cmd(13,[1,$v10]) via band limits") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10)) }
+        // SoC-FM units (full radio test 1.6.3 on the UIS8141E, radio_type 4): mode 3 is never
+        // forwarded to the stock radio app, and mode 1 with kHz (98100) sends the tuner to 87.5 MHz.
+        // Only mode 1 with 10 kHz units tunes there, so a slow first answer must not fall through
+        // to a format that jumps to the bottom of the band.
+        if (socFm) return listOf(inV10)
         return listOf(
             Variant("cmd(13,[3,$v10]) direct MCU") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_MCU_DIRECT, v10)) },
-            Variant("cmd(13,[1,$v10]) via band limits") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, v10)) },
+            inV10,
             Variant("cmd(13,[1,$target])") { it.cmd(Syu.C_FREQ, intArrayOf(Syu.FREQ_DIRECT, target)) },
         )
     }

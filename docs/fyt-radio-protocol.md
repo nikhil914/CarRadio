@@ -156,3 +156,14 @@ The radio check at start logs ms_handler and which stock screen was found.
   stock radio app that drives the chip. NavRadio+'s RadioProxy does the same, and NavRadio+ lists only MCU-tuner FYT
   platforms (UIS7862/7870/8581, SC9853i, SC9863A), not UIS8141. Radio on now stops with a clear message when the
   proxy is installed on such a unit, and Settings → Radio key warns.
+
+### Full radio test on the UIS8141E (radio type 4, 2026-11-13, Car Radio 1.6.3)
+- Tunes: `cmd(13,[1,v10])` (98.1 MHz → 9810), with or without a source claim, with or without the stock screen open.
+- Moves: step `cmd(3/4,[0])`, seek `cmd(5/6,[0])`, preset next/prev `cmd(0/1,[0])`; all forwarded as update 28.
+- `cmd(13,[1,kHz])` (98100) sends the tuner to 87.5 MHz. Mode 3, mode 0/2, code 33 and code 2 are not forwarded at all.
+- Starting `com.syu.broadcast.MyService` from Car Radio is refused by Android 8 while the stock app is cached
+  (`IllegalStateException: Not allowed to start service … app is in background`). The screen wake still works.
+- `libfmjni.so` cannot be loaded by another app (`JNI_OnLoad` returns JNI_ERR), so the SoC FM backend stays unusable.
+
+Car Radio 1.6.4: on radio types 3/4 the direct-tune fallback only uses `cmd(13,[1,v10])`, so a slow first answer no
+longer falls through to the kHz form that jumps to 87.5 MHz.
